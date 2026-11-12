@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Conhecimento do Subsolo</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="css/estilo.css">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">⛏️</span>
+      <div>
+        <h1>Conhecimento do Subsolo</h1>
+        <p class="tagline">Onde os relatórios técnicos NI 43-101 (SEDAR+) e as bases públicas do Serviço Geológico do Brasil (SGB/CPRM) trazem dados de campo sobre o terreno brasileiro — e quais estudos estão por trás de cada cor.</p>
+      </div>
+    </div>
+    <div class="topbar-meta">
+      <span class="mono" id="metaFonte">fonte: SEDAR+ · classe A</span>
+      <button class="theme-btn" id="themeBtn" title="alternar tema">◐</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="controls">
+      <div class="control-group">
+        <span class="control-label">Camadas de informação</span>
+        <div class="layer-list" id="layerList">
+          <label class="layer-item"><input type="checkbox" data-layer="pontos" checked>
+            <span><b>Pontos</b><small>furos, amostras, depósitos, centros de projeto</small></span></label>
+          <label class="layer-item"><input type="checkbox" data-layer="processos" checked>
+            <span><b>Processos ANM</b><small>polígonos SIGMINE citados nos relatórios</small></span></label>
+          <label class="layer-item"><input type="checkbox" data-layer="municipios">
+            <span><b>Municípios</b><small>município citado como local do projeto</small></span></label>
+        </div>
+      </div>
+
+      <div class="control-group" id="sgbGroup" hidden>
+        <span class="control-label">Dados públicos SGB/CPRM <a class="reset-link" id="sgbNone" hidden>desligar</a></span>
+        <div class="layer-list" id="sgbPontos"></div>
+        <span class="control-label sub-label">Áreas (contorno por cima do mapa)</span>
+        <div class="layer-list" id="sgbAreas"></div>
+        <p class="sub-note">Pontos SGB entram no heatmap pelas cores <b>Tipos de dado</b> e <b>Registros</b>. Clique numa área para ver todos os levantamentos que cobrem o local.</p>
+      </div>
+
+      <div class="control-group">
+        <span class="control-label">Como desenhar pontos e processos</span>
+        <div class="segmented" id="modoToggle">
+          <button data-modo="hex" class="active">Heatmap</button>
+          <button data-modo="marcadores">Marcadores</button>
+        </div>
+        <div id="hexOpts">
+          <div class="slider-head"><span class="sub-note">tamanho da célula</span><span class="slider-value mono" id="hexVal">50 km</span></div>
+          <input type="range" id="hexSize" min="10" max="150" step="5" value="50">
+        </div>
+      </div>
+
+      <div class="control-group">
+        <span class="control-label">Cor = </span>
+        <div class="segmented wrap" id="metricaToggle">
+          <button data-m="docs" class="active">Relatórios</button>
+          <button data-m="novos">Só dados novos</button>
+          <button data-m="diluido">Pontos (diluído)</button>
+          <button data-m="tipos">Tipos de dado</button>
+          <button data-m="registros">Registros</button>
+        </div>
+        <p class="sub-note" id="metricaNota"></p>
+      </div>
+
+      <div class="control-group">
+        <span class="control-label">Mostrar só áreas com valor <a class="reset-link" id="vClear" hidden>limpar</a></span>
+        <div class="minmax">
+          <label><span>mínimo</span><input type="number" id="vMin" step="any" min="0" placeholder="—" inputmode="decimal"></label>
+          <span class="minmax-sep">a</span>
+          <label><span>máximo</span><input type="number" id="vMax" step="any" min="0" placeholder="—" inputmode="decimal"></label>
+        </div>
+        <p class="sub-note">Esconde células e municípios cujo valor (na métrica de cor acima) fica fora do intervalo. Vazio = sem limite.</p>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="control-group">
+        <span class="control-label">Tipo de ponto <a class="reset-link" data-reset="tipos">todos</a></span>
+        <div class="chips" id="chipsTipos"></div>
+      </div>
+
+      <div class="control-group">
+        <span class="control-label">Precisão da coordenada <a class="reset-link" data-reset="precisao">todas</a></span>
+        <div class="chips" id="chipsPrecisao"></div>
+        <label class="check"><input type="checkbox" id="soUfConfere"> só pontos que caem na UF do projeto</label>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="control-group">
+        <span class="control-label">Tipo de informação <a class="reset-link" data-reset="info">qualquer</a></span>
+        <div class="chips" id="chipsInfo"></div>
+        <p class="sub-note">Nenhum marcado = qualquer. Marcados = relatório traz pelo menos um deles.</p>
+      </div>
+
+      <div class="control-group">
+        <span class="control-label">Commodity <a class="reset-link" data-reset="comm">qualquer</a></span>
+        <div class="chips" id="chipsComm"></div>
+        <p class="sub-note" id="commNota" hidden>Também filtra as ocorrências minerais e os recursos PDAC do SGB (e mostra distritos auríferos só com ouro).</p>
+      </div>
+
+      <div class="control-group" id="sgbFiltros" hidden>
+        <span class="control-label">SGB · tipo de amostra geoquímica <a class="reset-link" data-reset="geoqcl">todas</a></span>
+        <div class="chips" id="chipsGeoq"></div>
+        <span class="control-label">SGB · importância da ocorrência <a class="reset-link" data-reset="ocim">todas</a></span>
+        <div class="chips" id="chipsOcorr"></div>
+      </div>
+
+      <div class="control-group">
+        <span class="control-label">Envio ao SEDAR+</span>
+        <div class="range-dual">
+          <input type="range" id="anoMin"><input type="range" id="anoMax">
+        </div>
+        <div class="slider-head"><span class="mono" id="anoMinVal"></span><span class="mono" id="anoMaxVal"></span></div>
+      </div>
+
+      <div class="control-group">
+        <label class="check"><input type="checkbox" id="soNovos"> só relatórios com dados novos <small>(exclui emendas e repetições)</small></label>
+        <input type="search" id="busca" class="search" placeholder="buscar emissor, projeto, título ou local…">
+      </div>
+
+      <button class="link-btn" id="resetAll">↺ redefinir filtros</button>
+    </aside>
+
+    <main class="main">
+      <div class="stat-strip">
+        <div class="stat-tile"><div class="stat-label">Relatórios</div><div class="stat-value" id="kDocs">–</div><div class="stat-sub" id="kDocsSub"></div></div>
+        <div class="stat-tile"><div class="stat-label">Pontos</div><div class="stat-value" id="kPts">–</div><div class="stat-sub" id="kPtsSub"></div></div>
+        <div class="stat-tile"><div class="stat-label">Processos ANM</div><div class="stat-value" id="kProc">–</div><div class="stat-sub">com polígono SIGMINE</div></div>
+        <div class="stat-tile"><div class="stat-label">Municípios</div><div class="stat-value" id="kMun">–</div><div class="stat-sub">citados como local</div></div>
+        <div class="stat-tile"><div class="stat-label">Dados SGB</div><div class="stat-value" id="kSgb">–</div><div class="stat-sub" id="kSgbSub">camadas desligadas</div></div>
+      </div>
+
+      <section class="map-panel">
+        <div class="map-toolbar">
+          <span class="toolbar-title" id="mapTitle">Relatórios distintos por célula</span>
+          <div class="seg-mini"><button id="zoomReset">ver Brasil</button></div>
+        </div>
+        <div class="map-wrap" id="mapWrap">
+          <svg id="map" role="img" aria-label="Mapa do Brasil com densidade de informação"></svg>
+          <div class="map-tooltip" id="tooltip" hidden></div>
+          <div class="map-hint">scroll para zoom · arraste para navegar · clique para fixar as referências</div>
+          <canvas class="sgb-canvas" id="sgbCanvas"></canvas>
+          <div class="loading" id="loading">carregando dados…</div>
+        </div>
+        <div class="legend-bar" id="legendHex" data-key="hex">
+          <span class="legend-name" id="legendHexName">pontos + processos</span>
+          <span class="leg-end"><span class="leg-op">≤</span><input class="leg-input mono" data-end="lo" type="number" step="any" min="0" title="valor da cor mais clara (abaixo disso fica igual)"></span>
+          <span class="legend-scale seq"></span>
+          <span class="leg-end"><span class="leg-op">≥</span><input class="leg-input mono" data-end="hi" type="number" step="any" min="0" title="valor da cor mais escura (acima disso fica igual)"></span>
+          <button class="leg-reset" hidden title="voltar aos valores extremos dos dados">↺ extremos</button>
+        </div>
+        <div class="legend-bar" id="legendMun" data-key="mun" hidden>
+          <span class="legend-name">municípios</span>
+          <span class="leg-end"><span class="leg-op">≤</span><input class="leg-input mono" data-end="lo" type="number" step="any" min="0" title="valor da cor mais clara (abaixo disso fica igual)"></span>
+          <span class="legend-scale warm"></span>
+          <span class="leg-end"><span class="leg-op">≥</span><input class="leg-input mono" data-end="hi" type="number" step="any" min="0" title="valor da cor mais escura (acima disso fica igual)"></span>
+          <button class="leg-reset" hidden title="voltar aos valores extremos dos dados">↺ extremos</button>
+        </div>
+        <p class="legend-help" id="legendHelp">Dica: clique nos números da legenda para mudar onde a cor começa e termina.</p>
+        <div class="legend-bar types" id="legendTipos" hidden></div>
+      </section>
+
+      <section class="detail" id="detail">
+        <div class="detail-head">
+          <h2 id="detailTitle">Referências</h2>
+          <button class="link-btn" id="detailClear" hidden>limpar seleção</button>
+        </div>
+        <p class="sub-note" id="detailSub">Clique numa célula, ponto, processo ou município do mapa para listar todos os relatórios que trazem informação dali, com páginas e link para o PDF.</p>
+        <ol class="ref-list" id="refList"></ol>
+        <div id="sgbDetail"></div>
+      </section>
+
+      <footer class="foot">
+        Fonte: relatórios NI 43-101 (SEDAR+) de projetos no Brasil, lidos integralmente por modelo de linguagem; coordenadas convertidas para SIRGAS 2000.
+        Processos: SIGMINE/ANM (só ativos). Municípios: IBGE 2024. Um projeto pode ter centenas de furos — use "Pontos (diluído)" ou "Relatórios" para não deixar projetos muito sondados dominarem o mapa.
+        Detalhes em <span class="mono">sedar_ni43101/geo_brasil/README.md</span>.<br>
+        Dados públicos: SGB/CPRM via <span class="mono">scrapers_sgb</span> — GeoSGB (ocorrências minerais, geoquímica, geocronologia, gravimetria, magnetotelúrico, aerolevantamentos), P3MGeo (recursos minerais PDAC 2024, distritos auríferos), PDAC (folhas 1:50.000) e RIGeo (relatórios). <span id="sgbGerado"></span>
+      </footer>
+    </main>
+  </div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
