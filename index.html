@@ -26,19 +26,19 @@
   <div class="layout">
     <aside class="controls">
       <div class="control-group">
-        <span class="control-label">Camadas de informação</span>
+        <span class="control-label">Relatórios técnicos NI 43-101 · SEDAR+</span>
         <div class="layer-list" id="layerList">
           <label class="layer-item"><input type="checkbox" data-layer="pontos" checked>
-            <span><b>Pontos</b><small>furos, amostras, depósitos, centros de projeto</small></span></label>
+            <span><b><span class="src sedar">SEDAR+</span>Pontos de campo</b><small>furos, amostras, depósitos e centros de projeto citados nos relatórios</small></span></label>
           <label class="layer-item"><input type="checkbox" data-layer="processos" checked>
-            <span><b>Processos ANM</b><small>polígonos SIGMINE citados nos relatórios</small></span></label>
+            <span><b><span class="src sedar">SEDAR+</span>Processos ANM citados</b><small>polígonos SIGMINE dos processos citados nos relatórios</small></span></label>
           <label class="layer-item"><input type="checkbox" data-layer="municipios">
-            <span><b>Municípios</b><small>município citado como local do projeto</small></span></label>
+            <span><b><span class="src sedar">SEDAR+</span>Municípios citados</b><small>município citado como local do projeto</small></span></label>
         </div>
       </div>
 
       <div class="control-group" id="sgbGroup" hidden>
-        <span class="control-label">Dados públicos SGB/CPRM <a class="reset-link" id="sgbNone" hidden>desligar</a></span>
+        <span class="control-label">Dados públicos · Serviço Geológico do Brasil (SGB/CPRM) <a class="reset-link" id="sgbNone" hidden>desligar</a></span>
         <div class="layer-list" id="sgbPontos"></div>
         <span class="control-label sub-label">Áreas (contorno por cima do mapa)</span>
         <div class="layer-list" id="sgbAreas"></div>
@@ -54,7 +54,7 @@
           <button data-modo="marcadores">Marcadores</button>
         </div>
         <div id="hexOpts">
-          <div class="slider-head"><span class="sub-note">tamanho da célula</span><span class="slider-value mono" id="hexVal">50 km</span></div>
+          <div class="slider-head"><span class="sub-note">tamanho da célula (Brasil inteiro; diminui com o zoom)</span><span class="slider-value mono" id="hexVal">50 km</span></div>
           <input type="range" id="hexSize" min="10" max="150" step="5" value="50">
         </div>
       </div>
@@ -62,11 +62,11 @@
       <div class="control-group">
         <span class="control-label">Cor = </span>
         <div class="segmented wrap" id="metricaToggle">
-          <button data-m="docs" class="active">Relatórios</button>
-          <button data-m="novos">Só dados novos</button>
-          <button data-m="diluido">Pontos (diluído)</button>
-          <button data-m="tipos">Tipos de dado</button>
-          <button data-m="registros">Registros</button>
+          <button data-m="docs" class="active" title="relatórios SEDAR+ distintos">Relatórios SEDAR+</button>
+          <button data-m="novos" title="relatórios SEDAR+ com dados novos">SEDAR+ novos</button>
+          <button data-m="diluido" title="relatórios SEDAR+ repartidos entre seus pontos">SEDAR+ diluído</button>
+          <button data-m="tipos" title="quantas camadas (SEDAR+ e SGB) têm dado na célula">Tipos de dado</button>
+          <button data-m="registros" title="total de registros SEDAR+ e SGB na célula">Registros</button>
         </div>
         <p class="sub-note" id="metricaNota"></p>
       </div>
@@ -84,12 +84,12 @@
       <div class="divider"></div>
 
       <div class="control-group">
-        <span class="control-label">Tipo de ponto <a class="reset-link" data-reset="tipos">todos</a></span>
+        <span class="control-label">SEDAR+ · tipo de ponto <a class="reset-link" data-reset="tipos">todos</a></span>
         <div class="chips" id="chipsTipos"></div>
       </div>
 
       <div class="control-group">
-        <span class="control-label">Precisão da coordenada <a class="reset-link" data-reset="precisao">todas</a></span>
+        <span class="control-label">SEDAR+ · precisão da coordenada <a class="reset-link" data-reset="precisao">todas</a></span>
         <div class="chips" id="chipsPrecisao"></div>
         <label class="check"><input type="checkbox" id="soUfConfere"> só pontos que caem na UF do projeto</label>
       </div>
@@ -97,13 +97,13 @@
       <div class="divider"></div>
 
       <div class="control-group">
-        <span class="control-label">Tipo de informação <a class="reset-link" data-reset="info">qualquer</a></span>
+        <span class="control-label">SEDAR+ · tipo de informação <a class="reset-link" data-reset="info">qualquer</a></span>
         <div class="chips" id="chipsInfo"></div>
         <p class="sub-note">Nenhum marcado = qualquer. Marcados = relatório traz pelo menos um deles.</p>
       </div>
 
       <div class="control-group">
-        <span class="control-label">Commodity <a class="reset-link" data-reset="comm">qualquer</a></span>
+        <span class="control-label">Commodity · SEDAR+ e SGB <a class="reset-link" data-reset="comm">qualquer</a></span>
         <div class="chips" id="chipsComm"></div>
         <p class="sub-note" id="commNota" hidden>Também filtra as ocorrências minerais e os recursos PDAC do SGB (e mostra distritos auríferos só com ouro).</p>
       </div>
@@ -118,7 +118,7 @@
       </div>
 
       <div class="control-group">
-        <span class="control-label">Envio ao SEDAR+</span>
+        <span class="control-label">SEDAR+ · ano de envio do relatório</span>
         <div class="range-dual">
           <input type="range" id="anoMin"><input type="range" id="anoMax">
         </div>
@@ -126,7 +126,7 @@
       </div>
 
       <div class="control-group">
-        <label class="check"><input type="checkbox" id="soNovos"> só relatórios com dados novos <small>(exclui emendas e repetições)</small></label>
+        <label class="check"><input type="checkbox" id="soNovos"> só relatórios SEDAR+ com dados novos <small>(exclui emendas e repetições)</small></label>
         <input type="search" id="busca" class="search" placeholder="buscar emissor, projeto, título ou local…">
       </div>
 
@@ -135,16 +135,16 @@
 
     <main class="main">
       <div class="stat-strip">
-        <div class="stat-tile"><div class="stat-label">Relatórios</div><div class="stat-value" id="kDocs">–</div><div class="stat-sub" id="kDocsSub"></div></div>
-        <div class="stat-tile"><div class="stat-label">Pontos</div><div class="stat-value" id="kPts">–</div><div class="stat-sub" id="kPtsSub"></div></div>
-        <div class="stat-tile"><div class="stat-label">Processos ANM</div><div class="stat-value" id="kProc">–</div><div class="stat-sub">com polígono SIGMINE</div></div>
-        <div class="stat-tile"><div class="stat-label">Municípios</div><div class="stat-value" id="kMun">–</div><div class="stat-sub">citados como local</div></div>
+        <div class="stat-tile"><div class="stat-label">Relatórios SEDAR+</div><div class="stat-value" id="kDocs">–</div><div class="stat-sub" id="kDocsSub"></div></div>
+        <div class="stat-tile"><div class="stat-label">Pontos SEDAR+</div><div class="stat-value" id="kPts">–</div><div class="stat-sub" id="kPtsSub"></div></div>
+        <div class="stat-tile"><div class="stat-label">Processos ANM</div><div class="stat-value" id="kProc">–</div><div class="stat-sub">citados no SEDAR+, polígono SIGMINE</div></div>
+        <div class="stat-tile"><div class="stat-label">Municípios</div><div class="stat-value" id="kMun">–</div><div class="stat-sub">citados como local no SEDAR+</div></div>
         <div class="stat-tile"><div class="stat-label">Dados SGB</div><div class="stat-value" id="kSgb">–</div><div class="stat-sub" id="kSgbSub">camadas desligadas</div></div>
       </div>
 
       <section class="map-panel">
         <div class="map-toolbar">
-          <span class="toolbar-title" id="mapTitle">Relatórios distintos por célula</span>
+          <span class="toolbar-title" id="mapTitle">Relatórios SEDAR+ distintos por célula</span>
           <div class="seg-mini"><button id="zoomReset">ver Brasil</button></div>
         </div>
         <div class="map-wrap" id="mapWrap">
@@ -162,7 +162,7 @@
           <button class="leg-reset" hidden title="voltar aos valores extremos dos dados">↺ extremos</button>
         </div>
         <div class="legend-bar" id="legendMun" data-key="mun" hidden>
-          <span class="legend-name">municípios</span>
+          <span class="legend-name">SEDAR+ · municípios (relatórios)</span>
           <span class="leg-end"><span class="leg-op">≤</span><input class="leg-input mono" data-end="lo" type="number" step="any" min="0" title="valor da cor mais clara (abaixo disso fica igual)"></span>
           <span class="legend-scale warm"></span>
           <span class="leg-end"><span class="leg-op">≥</span><input class="leg-input mono" data-end="hi" type="number" step="any" min="0" title="valor da cor mais escura (acima disso fica igual)"></span>
@@ -178,13 +178,14 @@
           <button class="link-btn" id="detailClear" hidden>limpar seleção</button>
         </div>
         <p class="sub-note" id="detailSub">Clique numa célula, ponto, processo ou município do mapa para listar todos os relatórios que trazem informação dali, com páginas e link para o PDF.</p>
+        <h3 class="ref-head" id="refHead" hidden>Relatórios NI 43-101 · SEDAR+</h3>
         <ol class="ref-list" id="refList"></ol>
         <div id="sgbDetail"></div>
       </section>
 
       <footer class="foot">
         Fonte: relatórios NI 43-101 (SEDAR+) de projetos no Brasil, lidos integralmente por modelo de linguagem; coordenadas convertidas para SIRGAS 2000.
-        Processos: SIGMINE/ANM (só ativos). Municípios: IBGE 2024. Um projeto pode ter centenas de furos — use "Pontos (diluído)" ou "Relatórios" para não deixar projetos muito sondados dominarem o mapa.
+        Processos: SIGMINE/ANM (só ativos). Municípios: IBGE 2024. Um projeto pode ter centenas de furos — use "SEDAR+ diluído" ou "Relatórios SEDAR+" para não deixar projetos muito sondados dominarem o mapa.
         Detalhes em <span class="mono">sedar_ni43101/geo_brasil/README.md</span>.<br>
         Dados públicos: SGB/CPRM via <span class="mono">scrapers_sgb</span> — GeoSGB (ocorrências minerais, geoquímica, geocronologia, gravimetria, magnetotelúrico, aerolevantamentos), P3MGeo (recursos minerais PDAC 2024, distritos auríferos), PDAC (folhas geológicas 1:50.000 a 1:1.000.000 — fora a 1:50.000, o retângulo vem do código da folha), hidrogeologia (SIAGAS, RIMAS, fontes hidrominerais, domínios hidrogeológicos), Geologia do Brasil 1:2.500.000 e RIGeo (relatórios). <span id="sgbGerado"></span>
       </footer>

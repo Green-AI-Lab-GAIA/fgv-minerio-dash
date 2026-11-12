@@ -9,8 +9,14 @@
   const TIPO_NOME = {furo: 'furo de sondagem', amostra: 'amostra', trincheira: 'trincheira', 'centro do projeto': 'centro do projeto',
     deposito: 'depósito', alvo: 'alvo', vertice: 'vértice de área', outro: 'outro ponto'};
   const PREC_NOME = ['coordenada informada', 'zona UTM inferida'];
-  const SEQ = d3.interpolateRgbBasis(['#F2F9F7', '#93CDC0', '#57A395', '#1F6B63', '#0E3A35']);
-  const WARM = d3.interpolateRgbBasis(['#FCF6EC', '#E6C68E', '#C9944A', '#9A6420', '#5E3A10']);
+  // colour ramps: light theme goes light -> dark, dark theme dark -> light, so the cells with the most data are
+  // always the ones that stand out from the background (the legend gradients in the CSS follow the same stops)
+  const RAMPS = {
+    seq: {light: ['#F2F9F7', '#93CDC0', '#57A395', '#1F6B63', '#0E3A35'], dark: ['#21433D', '#2E6D61', '#43A08C', '#86D4C0', '#E2FAF2']},
+    warm: {light: ['#FCF6EC', '#E6C68E', '#C9944A', '#9A6420', '#5E3A10'], dark: ['#3D2C15', '#7A5422', '#B8853D', '#E2B86F', '#FCEDD0']},
+  };
+  const isDark = () => { const t = document.documentElement.dataset.theme; return t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; };
+  const ramp = name => d3.interpolateRgbBasis(RAMPS[name][isDark() ? 'dark' : 'light']);
   const fmt = d3.format(',d');
   const fmt1 = v => v >= 10 ? fmt(Math.round(v)) : d3.format('.1f')(v);
   const $ = id => document.getElementById(id);
@@ -59,7 +65,8 @@
     vmin: null, vmax: null,                                  // show only areas whose value is within [vmin, vmax]
     scale: {hex: {lo: null, hi: null}, mun: {lo: null, hi: null}},  // manual colour-scale ends (null = data extremes)
   };
-  let svg, gRoot, gMun, gHex, gMark, projection, pxPerKm, zoomK = 1, zoom, munPaths, munFeatures;
+  let svg, gRoot, gMun, gHex, gHexFree, gMark, projection, pxPerKm, zoomK = 1, zoom, munPaths, munFeatures;
+  let hexKmShown = null, hexBox = null, rehexTimer = null;
   let F = null; // current filtered data
   let gCov, gOvl, canvas, W0, H0, zT = d3.zoomIdentity, sgbTree = null, sgbTip = false, drawPending = false;
 
@@ -160,7 +167,7 @@
       lab.className = 'layer-item';
       const sub = d.k === 'pocos' && L.pocos ? `${d.sub} · SIAGAS só ${L.pocos.siagas_ufs.join(', ') || '—'}; RIMAS no país` : d.sub;
       lab.innerHTML = `<input type="checkbox" data-sgb="${d.k}"><span class="sw${area ? ' area' : ''}" style="background:${d.cor};border-color:${d.cor}"></span>
-        <span><b>${esc(d.nome)}<span class="n">${fmt(nOf(d))}</span></b><small>${esc(sub)}</small></span>`;
+        <span><b><span class="src sgb">SGB</span>${esc(d.nome)}<span class="n">${fmt(nOf(d))}</span></b><small>${esc(sub)}</small></span>`;
       const inp = lab.querySelector('input'), small = lab.querySelector('small');
       inp.onchange = async () => {
         if (inp.checked && d.lazy && !L[d.k]) {
@@ -245,7 +252,7 @@
       bar.querySelector('.leg-reset').onclick = () => { resetScale(key); key === 'hex' ? renderHex() : renderMun(); };
     });
     let t;
-    $('hexSize').oninput = e => { S.hexKm = +e.target.value; $('hexVal').textContent = `${S.hexKm} km`; clearTimeout(t); t = setTimeout(update, 60); };
+    $('hexSize').oninput = e => { S.hexKm = +e.target.value; hexTitle(); clearTimeout(t); t = setTimeout(update, 60); };
     $('busca').oninput = e => { S.busca = e.target.value.trim().toLowerCase(); clearTimeout(t); t = setTimeout(update, 200); };
     $('soUfConfere').onchange = e => { S.ufconf = e.target.checked; update(); };
     $('soNovos').onchange = e => { S.soNovos = e.target.checked; update(); };
@@ -286,7 +293,9 @@
       const r = document.documentElement;
       const dark = r.dataset.theme ? r.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
       r.dataset.theme = dark ? 'light' : 'dark';
+      recolor();
     };
+    matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => { if (!document.documentElement.dataset.theme) recolor(); });
     $('hexOpts').hidden = false;
     buildSgbControls();
   }
@@ -340,7 +349,12 @@
       .attr('class', 'br-line').attr('d', path).attr('vector-effect', 'non-scaling-stroke');
     gCov = gRoot.insert('g', ':first-child');  // background maps under the municipalities (see .with-cov in the CSS)
     gOvl = gRoot.append('g');
-    gHex = gRoot.append('g');
+    // heatmap cells are clipped to the country outline, except cells whose centre is outside it (offshore or
+    // border data), which would otherwise disappear
+    svg.append('defs').append('clipPath').attr('id', 'clipBrasil').append('path').datum(brasil).attr('d', path);
+    buildBrasilMask(brasil);
+    gHex = gRoot.append('g').attr('clip-path', 'url(#clipBrasil)');
+    gHexFree = gRoot.append('g');
     gMark = gRoot.append('g');
 
     PTS.forEach(p => { const xy = projection([p[0], p[1]]); p.px = xy[0]; p.py = xy[1]; });
@@ -357,6 +371,9 @@
       gRoot.attr('transform', e.transform);
       zT = e.transform; scheduleCanvas();
       if (Math.abs(e.transform.k - zoomK) > 0.01) { zoomK = e.transform.k; gMark.selectAll('circle').attr('r', 2.6 / Math.sqrt(zoomK)); }
+      // the heatmap keeps about the same cell size on screen and only draws cells near the view: rebuild once the
+      // zoom/pan settles, if the cell size changed or the view left the drawn area
+      if (S.modo === 'hex') { clearTimeout(rehexTimer); rehexTimer = setTimeout(rehexIfNeeded, 180); }
     });
     svg.call(zoom).on('dblclick.zoom', null);
     $('zoomReset').onclick = () => svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity);
@@ -460,25 +477,70 @@
   }
 
   // ---------- render ----------
+  // theme change: only the colours change, keep the selection
+  function recolor() { if (!F) return; renderMun(); if (S.modo === 'hex') renderHex(); }
+
   function update() {
+    clearTimeout(rehexTimer);
     F = filter();
     select(null, true);
     renderMun();
     renderAreas();
     sgbTree = null;
-    if (S.modo === 'hex') { renderHex(); gMark.selectAll('*').remove(); } else { renderMarkers(); gHex.selectAll('*').remove(); }
+    if (S.modo === 'hex') { renderHex(); gMark.selectAll('*').remove(); } else { renderMarkers(); gHex.selectAll('*').remove(); gHexFree.selectAll('*').remove(); }
     drawCanvas();
     renderStats();
-    const m = {docs: 'Relatórios distintos', novos: 'Relatórios com dados novos', diluido: 'Relatórios equivalentes (diluído)',
-      tipos: 'Tipos de dado distintos', registros: 'Registros (pontos, processos e dados SGB)'}[S.metrica];
-    $('mapTitle').textContent = S.modo === 'hex' ? `${m} por célula de ${S.hexKm} km` : 'Marcadores — cor pelo tipo de ponto / camada';
+    hexTitle();
     $('metricaNota').textContent = {
-      docs: 'Relatórios: quantos estudos diferentes trazem dado de campo da área. Um relatório com 300 furos na célula conta 1; três relatórios sobre o mesmo furo contam 3.',
-      novos: 'Só dados novos: igual a Relatórios, mas sem emendas/refilings e sem relatórios cujos pontos já tinham sido publicados antes. Mede estudos independentes.',
-      diluido: 'Pontos (diluído): cada relatório vale 1 no total, repartido igualmente entre todos os seus pontos e processos (municípios: entre os municípios que cita). Uma célula com 30 de 300 furos de um relatório recebe 0,1. Mostra onde o esforço de cada estudo se concentra.',
+      docs: 'Relatórios SEDAR+: quantos relatórios NI 43-101 diferentes trazem dado de campo da área. Um relatório com 300 furos na célula conta 1; três relatórios sobre o mesmo furo contam 3.',
+      novos: 'SEDAR+ novos: igual a Relatórios SEDAR+, mas sem emendas/refilings e sem relatórios cujos pontos já tinham sido publicados antes. Mede estudos independentes.',
+      diluido: 'SEDAR+ diluído: cada relatório SEDAR+ vale 1 no total, repartido igualmente entre todos os seus pontos e processos (municípios: entre os municípios que cita). Uma célula com 30 de 300 furos de um relatório recebe 0,1. Mostra onde o esforço de cada estudo se concentra.',
       tipos: 'Tipos de dado: quantas camadas ligadas têm algo na célula (pontos SEDAR+, processos ANM e cada camada de pontos do SGB contam 1). Mede a variedade do conhecimento: 6 = sondagem, geoquímica, gravimetria, datação… no mesmo lugar.',
       registros: 'Registros: soma de tudo o que cai na célula — pontos e processos SEDAR+ mais amostras, ocorrências e estações do SGB. Camadas grandes (365 mil amostras geoquímicas) dominam; desligue-as para comparar as demais.',
-    }[S.metrica] + (sgbOn() && !sgbMetric() ? ' Atenção: os pontos SGB não entram nesta cor — use Tipos de dado ou Registros.' : '');
+    }[S.metrica] + (sgbOn() && !sgbMetric() ? ' Atenção: as cores SEDAR+ só contam relatórios SEDAR+ — os pontos SGB entram em Tipos de dado e Registros.' : '');
+  }
+
+  // raster of the country outline in map coordinates (3 px per unit), for a constant-time "is this inside Brazil?"
+  let maskData = null;
+  const MASK_K = 3;
+  function buildBrasilMask(brasil) {
+    const c = document.createElement('canvas');
+    c.width = Math.ceil(W0 * MASK_K); c.height = Math.ceil(H0 * MASK_K);
+    const ctx = c.getContext('2d', {willReadFrequently: true});
+    ctx.scale(MASK_K, MASK_K);
+    ctx.beginPath(); d3.geoPath(projection, ctx)(brasil); ctx.fill();
+    const rgba = ctx.getImageData(0, 0, c.width, c.height).data, a = new Uint8Array(c.width * c.height);
+    for (let i = 0; i < a.length; i++) a[i] = rgba[i * 4 + 3] > 127 ? 1 : 0;
+    maskData = {w: c.width, h: c.height, a};
+  }
+  function insideBrasil(x, y) {
+    const i = Math.floor(x * MASK_K), j = Math.floor(y * MASK_K);
+    return !!maskData && i >= 0 && j >= 0 && i < maskData.w && j < maskData.h && maskData.a[j * maskData.w + i] === 1;
+  }
+
+  // visible part of the map, in map coordinates
+  function viewBoxNow() {
+    return [-zT.x / zT.k, -zT.y / zT.k, (W0 - zT.x) / zT.k, (H0 - zT.y) / zT.k];
+  }
+  function rehexIfNeeded() {
+    if (S.modo !== 'hex' || !F) return;
+    const v = viewBoxNow();
+    if (hexKm() !== hexKmShown || !hexBox || v[0] < hexBox[0] || v[1] < hexBox[1] || v[2] > hexBox[2] || v[3] > hexBox[3]) { renderHex(); hexTitle(); }
+  }
+
+  // cell radius in km: the slider value at the whole-country view, divided by the zoom (rounded), never below
+  // 5 km (smaller cells would mean tens of thousands of hexagons with the geochemistry layer on)
+  const HEX_MIN_KM = 5;
+  function hexKm() {
+    const v = S.hexKm / zoomK;
+    return Math.max(Math.min(HEX_MIN_KM, S.hexKm), v >= 20 ? Math.round(v / 5) * 5 : Math.round(v));
+  }
+  function hexTitle() {
+    const m = {docs: 'Relatórios SEDAR+ distintos', novos: 'Relatórios SEDAR+ com dados novos', diluido: 'Relatórios SEDAR+ equivalentes (diluído)',
+      tipos: 'Tipos de dado distintos', registros: 'Registros (SEDAR+ e SGB)'}[S.metrica];
+    const km = hexKm();
+    $('mapTitle').textContent = S.modo === 'hex' ? `${m} por célula de ${km} km` : 'Marcadores — cor pela fonte e tipo de dado';
+    $('hexVal').textContent = km === S.hexKm ? `${S.hexKm} km` : `${S.hexKm} km · com o zoom: ${km} km`;
   }
 
   function renderMun() {
@@ -487,7 +549,7 @@
     // municipalities carry only SEDAR+ citations: the SGB metrics count distinct reports there
     if (on) F.mun.forEach((r, cd) => { const ds = new Set(r.map(x => x[0])); const v = sgbMetric() ? ds.size : value(ds, F.munW.get(cd)); if (v > 0 && inRange(v)) vals.set(cd, v); });
     const max = d3.max(vals.values()) || 1;
-    const sc = legendScale('mun', WARM, max);
+    const sc = legendScale('mun', ramp('warm'), max);
     munPaths.classed('on', f => vals.has(f.properties.CD_MUN))
       .style('fill', f => vals.has(f.properties.CD_MUN) && vals.get(f.properties.CD_MUN) > 0 ? sc(vals.get(f.properties.CD_MUN)) : null)
       .on('mousemove', on ? (e, f) => { if (vals.has(f.properties.CD_MUN)) showTip(e, munTip(f)); else hideTip(); } : null)
@@ -510,11 +572,12 @@
   }
 
   function renderHex() {
-    const r = S.hexKm * pxPerKm, bin = hexbin(r), cells = new Map();
+    hexKmShown = hexKm();
+    const r = hexKmShown * pxPerKm, bin = hexbin(r), cells = new Map();
     const add = (o, kind) => {
       const [i, j, cx, cy] = bin(o.p.px, o.p.py), k = i + ',' + j;
       let c = cells.get(k);
-      if (!c) cells.set(k, c = {cx, cy, pts: [], procs: [], docs: new Set(), w: 0, sg: {}});
+      if (!c) cells.set(k, c = {key: k, cx, cy, pts: [], procs: [], docs: new Set(), w: 0, sg: {}});
       c[kind].push(o); o.r.forEach(x => c.docs.add(x[0])); c.w += o.w;
     };
     F.pts.forEach(o => add(o, 'pts')); F.procs.forEach(o => add(o, 'procs'));
@@ -523,7 +586,7 @@
       for (const i of idx) {
         const [bi, bj, cx, cy] = bin(o.px[i], o.py[i]), key = bi + ',' + bj;
         let c = cells.get(key);
-        if (!c) cells.set(key, c = {cx, cy, pts: [], procs: [], docs: new Set(), w: 0, sg: {}});
+        if (!c) cells.set(key, c = {key, cx, cy, pts: [], procs: [], docs: new Set(), w: 0, sg: {}});
         (c.sg[lk] || (c.sg[lk] = [])).push(i);
       }
     }
@@ -531,18 +594,28 @@
     data.forEach(c => c.v = value(c.docs, c.w, c));
     const shown = data.filter(c => c.v > 0 && inRange(c.v));
     const max = d3.max(shown, c => c.v) || 1;
-    const sc = legendScale('hex', SEQ, max);
+    const sc = legendScale('hex', ramp('seq'), max);
     const hexPath = 'M' + d3.range(6).map(k => { const a = k * Math.PI / 3; return [r * Math.sin(a), -r * Math.cos(a)].map(v => v.toFixed(2)).join(','); }).join('L') + 'Z';
-    gHex.selectAll('path').data(shown.sort((a, b) => a.v - b.v)).join('path')
-      .attr('class', 'hex').attr('vector-effect', 'non-scaling-stroke')
+    // the colour scale uses every cell; only the cells around the view (1.5 views each way) become SVG paths
+    const v = viewBoxNow(), mx = (v[2] - v[0]) * 1.5, my = (v[3] - v[1]) * 1.5;
+    hexBox = zoomK <= 1.01 ? [-Infinity, -Infinity, Infinity, Infinity] : [v[0] - mx, v[1] - my, v[2] + mx, v[3] + my];
+    const near = shown.filter(c => c.cx + r >= hexBox[0] && c.cx - r <= hexBox[2] && c.cy + r >= hexBox[1] && c.cy - r <= hexBox[3]);
+    near.sort((a, b) => a.v - b.v).forEach(c => { c.inBR = insideBrasil(c.cx, c.cy); });
+    const selKey = S.sel && S.sel.cellKm === hexKmShown ? S.sel.cellKey : null;
+    const draw = (g, data) => g.selectAll('path').data(data, c => c.key).join('path')
+      .attr('class', c => c.key === selKey ? 'hex sel' : 'hex').attr('vector-effect', 'non-scaling-stroke')
       .attr('transform', c => `translate(${c.cx},${c.cy})`).attr('d', hexPath)
       .attr('fill', c => sc(c.v)).attr('fill-opacity', S.layers.municipios ? 0.88 : 1)
       .on('mousemove', (e, c) => showTip(e, cellTip(c)))
       .on('mouseleave', hideTip)
       .on('click', (e, c) => { e.stopPropagation(); selectCell(c, e.currentTarget); });
+    draw(gHex, near.filter(c => c.inBR));
+    draw(gHexFree, near.filter(c => !c.inBR));
+    // keep the selected cell highlighted when the cells are rebuilt (theme change, pan); a new cell size drops it
+    if (S.sel && S.sel.cellKey != null) selEl = gRoot.select('path.hex.sel').node();
     const any = S.layers.pontos || S.layers.processos || sgbOn();
     $('legendHex').hidden = !any; $('legendHelp').hidden = false;
-    $('legendHexName').textContent = [S.layers.pontos && 'pontos', S.layers.processos && 'processos', sgbOn() && 'SGB'].filter(Boolean).join(' + ');
+    $('legendHexName').textContent = [S.layers.pontos && 'SEDAR+ pontos', S.layers.processos && 'SEDAR+ processos', sgbOn() && sgbMetric() && 'SGB'].filter(Boolean).join(' + ');
     legendTypes(false);
   }
 
@@ -567,11 +640,12 @@
     const areas = SGB_AREA.filter(d => S.sgb[d.k] && SGB?.camadas[d.k]);
     const covs = SGB_COV.filter(d => S.sgb[d.k] && SGB?.camadas[d.k]);
     lt.hidden = !markers && !areas.length && !covs.length;
-    lt.innerHTML = (markers ? '<span class="legend-name">tipo</span>' + META.tipos.map((t, i) => `<span><i style="background:${TIPO_COR[i]}"></i>${TIPO_NOME[t]}</span>`).join('')
-      + '<span><i style="background:var(--accent);opacity:.4;border-radius:2px"></i>processo ANM</span>' : areas.length ? '<span class="legend-name">áreas SGB</span>' : '')
+    lt.innerHTML = (markers ? '<span class="legend-name">SEDAR+ · tipo de ponto</span>' + META.tipos.map((t, i) => `<span><i style="background:${TIPO_COR[i]}"></i>${TIPO_NOME[t]}</span>`).join('')
+      + '<span><i style="background:var(--accent);opacity:.4;border-radius:2px"></i>processo ANM</span>' + (sgbPts.length ? '<span class="legend-name">SGB · pontos</span>' : '') : '')
       + sgbPts.map(d => `<span><i style="background:${d.cor};border-radius:1px"></i>${esc(d.nome)}</span>`).join('')
+      + (areas.length ? '<span class="legend-name">SGB · áreas</span>' : '')
       + areas.map(d => `<span><i style="border:2px solid ${d.cor};background:transparent;border-radius:2px"></i>${esc(d.nome)}</span>`).join('')
-      + covs.map(d => `<span class="legend-name">${esc(d.nome)} (${d.catNome})</span>` + Object.entries(d.pal)
+      + covs.map(d => `<span class="legend-name">SGB · ${esc(d.nome)} (${d.catNome})</span>` + Object.entries(d.pal)
         .filter(([c]) => SGB.cat[d.k].includes(c)).map(([c, cor]) => `<span><i style="background:${cor};border-radius:2px"></i>${esc(c)}</span>`).join('')).join('');
   }
 
@@ -693,7 +767,7 @@
     const furos = c.pts.filter(o => o.p[2] === 0).length;
     const sg = SGB_PT.filter(d => c.sg[d.k]).map(d => `<b>${fmt(c.sg[d.k].length)}</b> ${d.curto}`).join(' · ');
     const head = c.docs.size || c.pts.length || c.procs.length
-      ? `<b>${fmt(c.docs.size)}</b> relatórios · <b>${fmt(c.pts.length)}</b> pontos${furos ? ` (${fmt(furos)} furos)` : ''} · <b>${fmt(c.procs.length)}</b> processos` : '';
+      ? `SEDAR+: <b>${fmt(c.docs.size)}</b> relatórios · <b>${fmt(c.pts.length)}</b> pontos${furos ? ` (${fmt(furos)} furos)` : ''} · <b>${fmt(c.procs.length)}</b> processos` : '';
     return head + (sg ? `${head ? '<br>' : ''}<span class="sgbl">SGB: ${sg}</span>` : '')
       + (S.metrica === 'diluido' ? `<br>valor diluído: <b>${fmt1(c.w)}</b>` : '')
       + (S.metrica === 'tipos' ? `<br>tipos de dado: <b>${c.v}</b>` : '') + (S.metrica === 'registros' ? `<br>registros: <b>${fmt(c.v)}</b>` : '')
@@ -701,7 +775,7 @@
   }
   function sgbPtTip({k, i}) {
     const o = SGB.camadas[k], d = SGB_DEF[k];
-    const where = `<span class="muted">${d.nome}</span>`;
+    const where = `<span class="muted">SGB · ${d.nome}</span>`;
     if (k === 'ocorr') return `<b>${esc(o.nm[i] || '(sem nome)')}</b> — ${esc(o.cn[i].join(', '))}<br>${esc(o.st_l[o.st[i]])} · ${esc(o.im_l[o.im[i]])} · ${esc(o.mun[i])}/${o.uf[i]}<br>${where}`;
     if (k === 'recmin') return `<b>${esc(o.nm[i])}</b> — ${esc(o.ce[i])}<br>${esc(o.cl_l[o.cl[i]])} · porte ${esc(o.sz_l[o.sz[i]])} · ${esc(o.st[i])}<br>${where}`;
     if (k === 'geoq') { const pj = o.pj_l[o.pj[i]]; return `<b>${esc(o.cl_l[o.cl[i]])}</b>${o.yr[i] ? ` (${o.yr[i]})` : ''}<br>${esc(pj.t)}<br>${where}`; }
@@ -721,13 +795,13 @@
   }
   function areaTip({k, a}) {
     const d = SGB_DEF[k];
-    if (k === 'aero') return `<b>${esc(a.t)}</b><br>${esc(a.m)} · ${esc(a.a)}${a.lv ? ` · linhas a ${esc(a.lv)} m` : ''}<br><span class="muted">${d.nome} · ${esc(a.ct)} · ${esc(a.s.toLowerCase())}</span>`;
-    if (k === 'geoqproj') return `<b>${esc(a.t)}</b><br>escala ${esc(a.esc)} · ${a.a0}${a.a1 && a.a1 !== a.a0 ? '–' + a.a1 : ''}<br><span class="muted">${d.nome}</span>`;
-    if (k === 'folhas') return `<b>${esc(a.cod)}</b> — ${esc(a.t)}<br>${a.esc} · ${esc(a.a)}<br><span class="muted">${d.nome}</span>`;
-    if (k === 'distau') return `<b>Distrito ${esc(a.t)}</b><br>província ${esc(a.prov)} · ${esc(a.ug)} · ${esc(a.uf)}<br><span class="muted">${d.nome}</span>`;
-    if (k === 'provau') return `<b>${esc(a.t)}</b><br>${esc(a.pg)} · ${esc(a.uf)}<br><span class="muted">${d.nome}</span>`;
-    if (k === 'geol') return `<b>${esc(a.t)}</b> <span class="muted">(${esc(a.s)})</span><br>${geolIdade(a)}${a.li ? '<br>' + esc(a.li) : ''}<br><span class="muted">${d.nome}</span>`;
-    if (k === 'hidro') return `<b>${esc(a.t)}</b> <span class="muted">(${esc(a.s)})</span><br>domínio ${esc(SGB.cat.hidro[a.c])}${a.sd && a.sd !== SGB.cat.hidro[a.c] ? ' · ' + esc(a.sd) : ''}${a.po ? ` · potencial ${esc(a.po.toLowerCase())}` : ''}<br><span class="muted">${d.nome}</span>`;
+    if (k === 'aero') return `<b>${esc(a.t)}</b><br>${esc(a.m)} · ${esc(a.a)}${a.lv ? ` · linhas a ${esc(a.lv)} m` : ''}<br><span class="muted">SGB · ${d.nome} · ${esc(a.ct)} · ${esc(a.s.toLowerCase())}</span>`;
+    if (k === 'geoqproj') return `<b>${esc(a.t)}</b><br>escala ${esc(a.esc)} · ${a.a0}${a.a1 && a.a1 !== a.a0 ? '–' + a.a1 : ''}<br><span class="muted">SGB · ${d.nome}</span>`;
+    if (k === 'folhas') return `<b>${esc(a.cod)}</b> — ${esc(a.t)}<br>${a.esc} · ${esc(a.a)}<br><span class="muted">SGB · ${d.nome}</span>`;
+    if (k === 'distau') return `<b>Distrito ${esc(a.t)}</b><br>província ${esc(a.prov)} · ${esc(a.ug)} · ${esc(a.uf)}<br><span class="muted">SGB · ${d.nome}</span>`;
+    if (k === 'provau') return `<b>${esc(a.t)}</b><br>${esc(a.pg)} · ${esc(a.uf)}<br><span class="muted">SGB · ${d.nome}</span>`;
+    if (k === 'geol') return `<b>${esc(a.t)}</b> <span class="muted">(${esc(a.s)})</span><br>${geolIdade(a)}${a.li ? '<br>' + esc(a.li) : ''}<br><span class="muted">SGB · ${d.nome}</span>`;
+    if (k === 'hidro') return `<b>${esc(a.t)}</b> <span class="muted">(${esc(a.s)})</span><br>domínio ${esc(SGB.cat.hidro[a.c])}${a.sd && a.sd !== SGB.cat.hidro[a.c] ? ' · ' + esc(a.sd) : ''}${a.po ? ` · potencial ${esc(a.po.toLowerCase())}` : ''}<br><span class="muted">SGB · ${d.nome}</span>`;
     return '';
   }
   function ptTip(o) {
@@ -740,7 +814,7 @@
   }
   function munTip(f) {
     const r = F.mun.get(f.properties.CD_MUN);
-    return `<b>${esc(f.properties.NM_MUN)} / ${f.properties.SIGLA_UF}</b><br><b>${fmt(new Set(r.map(x => x[0])).size)}</b> relatórios citam o município como local de projeto` + docLines(new Set(r.map(x => x[0])));
+    return `<b>${esc(f.properties.NM_MUN)} / ${f.properties.SIGLA_UF}</b><br><b>${fmt(new Set(r.map(x => x[0])).size)}</b> relatórios SEDAR+ citam o município como local de projeto` + docLines(new Set(r.map(x => x[0])));
   }
   function showTip(e, html) {
     const tip = $('tooltip'), wrap = $('mapWrap').getBoundingClientRect();
@@ -761,7 +835,7 @@
     if (!sel) {
       $('detailTitle').textContent = 'Referências';
       $('detailSub').textContent = 'Clique numa célula, ponto, processo ou município do mapa para listar todos os relatórios que trazem informação dali, com páginas e link para o PDF.';
-      $('refList').innerHTML = ''; $('sgbDetail').innerHTML = ''; $('detailClear').hidden = true;
+      $('refList').innerHTML = ''; $('sgbDetail').innerHTML = ''; $('detailClear').hidden = true; $('refHead').hidden = true;
       return;
     }
     if (sel.el) { selEl = sel.el; d3.select(selEl).classed('sel', true); }
@@ -772,8 +846,9 @@
     const items = c.pts.length + c.procs.length;
     const nsg = Object.values(c.sg).reduce((s, a) => s + a.length, 0);
     const [lon, lat] = projection.invert([c.cx, c.cy]);
-    select({title: `Célula de ${S.hexKm} km`, sub: `${fmt(c.docs.size)} relatórios · ${fmt(c.pts.length)} pontos · ${fmt(c.procs.length)} processos ANM (${fmt(items)} itens)` + (nsg ? ` · ${fmt(nsg)} registros SGB` : ''),
-      pts: c.pts, procs: c.procs, mun: [], el, sgb: c.sg, areas: areasAt(lon, lat), areaNote: 'áreas SGB que cobrem o centro da célula'});
+    select({title: `Célula de ${hexKmShown} km`, sub: `${fmt(c.docs.size)} relatórios · ${fmt(c.pts.length)} pontos · ${fmt(c.procs.length)} processos ANM (${fmt(items)} itens)` + (nsg ? ` · ${fmt(nsg)} registros SGB` : ''),
+      pts: c.pts, procs: c.procs, mun: [], el, sgb: c.sg, areas: areasAt(lon, lat), areaNote: 'áreas SGB que cobrem o centro da célula',
+      cellKey: c.key, cellKm: hexKmShown});
   }
   function selectItems(title, pts, procs, el) {
     const docs = new Set(); pts.concat(procs).forEach(o => o.r.forEach(r => docs.add(r[0])));
@@ -804,6 +879,7 @@
     sel.mun.forEach(([d, proj, pgs]) => { const g = get(d); g.projetos.add(proj); String(pgs).split(';').filter(Boolean).forEach(p => g.pages.add(+p)); });
     const arr = [...by.entries()].sort((a, b) => DOCS[b[0]].d.localeCompare(DOCS[a[0]].d));
     renderSgbDetail(sel);
+    $('refHead').hidden = !arr.length;
     $('detailTitle').textContent = sel.title;
     $('detailSub').textContent = sel.sub;
     $('detailClear').hidden = false;
