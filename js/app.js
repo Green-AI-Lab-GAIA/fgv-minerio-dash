@@ -17,44 +17,60 @@
   const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 
   // SGB/CPRM layers: points go into the heatmap (metrics "tipos" and "registros") or are drawn on a canvas as
-  // markers; areas are outlines drawn above the municipalities in both modes.
+  // markers; areas are outlines drawn above the municipalities in both modes; the two country-wide maps
+  // (geology, hydrogeology) are filled by category under everything else. Layers with `lazy` live in their own
+  // file, fetched the first time the layer is turned on.
   const SGB_PT = [
     {k: 'ocorr', nome: 'Ocorrências minerais', sub: 'minas, garimpos, depósitos e indícios (GeoSGB)', cor: '#C0392B', curto: 'ocorrências'},
     {k: 'recmin', nome: 'Recursos minerais PDAC', sub: 'minas e depósitos com porte, 2024 (P3MGeo)', cor: '#7A4C8C', curto: 'recursos PDAC'},
-    {k: 'geoq', nome: 'Amostras geoquímicas', sub: 'sedimento, solo, rocha, bateia (GeoSGB)', cor: '#3D6E8C', curto: 'amostras geoq.'},
+    {k: 'geoq', nome: 'Amostras geoquímicas', sub: 'sedimento, solo, rocha, bateia (GeoSGB) · 10 MB, carrega ao ligar', cor: '#3D6E8C', curto: 'amostras geoq.', lazy: 'sgb_geoquimica'},
     {k: 'geocron', nome: 'Geocronologia', sub: 'amostras datadas: U-Pb, Sm-Nd, Pb-Pb… (GeoSGB)', cor: '#B5791F', curto: 'datações'},
     {k: 'grav', nome: 'Gravimetria', sub: 'estações gravimétricas terrestres (GeoSGB)', cor: '#6B6A26', curto: 'estações grav.'},
     {k: 'mt', nome: 'Magnetotelúrico', sub: 'estações MT (GeoSGB)', cor: '#1F6B5C', curto: 'estações MT'},
+    {k: 'pocos', nome: 'Poços (SIAGAS / RIMAS)', sub: 'poços tubulares, de monitoramento, nascentes (GeoSGB)', cor: '#1A9BB0', curto: 'poços'},
+    {k: 'fontes', nome: 'Fontes hidrominerais', sub: 'municípios com fontes cadastradas (GeoSGB)', cor: '#5B8C3A', curto: 'fontes hidromin.'},
   ];
   const SGB_AREA = [
     {k: 'aero', nome: 'Aerolevantamentos', sub: 'magnetometria, gamaespectrometria… (GeoSGB)', cor: '#2F6FA8'},
     {k: 'geoqproj', nome: 'Projetos geoquímicos', sub: 'área de cada projeto, com relatório no RIGeo', cor: '#7A4C8C'},
-    {k: 'folhas50', nome: 'Folhas geológicas 1:50.000', sub: 'mapeamento sistemático, PDF no RIGeo (PDAC)', cor: '#B5791F'},
-    {k: 'distau', nome: 'Distritos auríferos', sub: 'distritos e províncias de ouro (P3MGeo)', cor: '#C0392B'},
+    {k: 'folhas', nome: 'Folhas geológicas', sub: 'mapeamento sistemático 1:50.000 a 1:1.000.000, PDF no RIGeo (PDAC)', cor: '#B5791F'},
+    {k: 'distau', nome: 'Distritos auríferos', sub: 'distritos de ouro (P3MGeo)', cor: '#C0392B'},
+    {k: 'provau', nome: 'Províncias auríferas', sub: 'províncias de ouro (P3MGeo)', cor: '#D4A017'},
   ];
-  const SGB_ALL = SGB_PT.concat(SGB_AREA), SGB_DEF = Object.fromEntries(SGB_ALL.map(d => [d.k, d]));
+  const ERA_COR = {'Cenozóico': '#F2F91D', 'Mesozóico': '#67C5CA', 'Paleozóico': '#99C08D', 'Neoproterozóico': '#FEB342',
+    'Mesoproterozóico': '#F9D8A0', 'Paleoproterozóico': '#F74370', 'Neoarqueano': '#F99BC1', 'Mesoarqueano': '#F768A9',
+    'Paleoarqueano': '#F4449F', 'Eoarqueano': '#DA037F'};
+  const HIDRO_COR = {'Formações cenozóicas': '#E8D16A', 'Bacias sedimentares': '#5DA9D6', 'Poroso/Fissural': '#7FC2A9',
+    'Carbonatos-Metacarbonatos': '#6C8FC7', 'Metassedimentos-Metavulcânicas': '#9C7FB0', 'Vulcânicas': '#C0605A', 'Cristalino': '#C9A27E'};
+  const SGB_COV = [
+    {k: 'geol', nome: 'Geologia do Brasil 1:2,5M', sub: 'unidades litoestratigráficas, cor pela era (GeoSGB) · 7 MB', cor: '#F74370', lazy: 'sgb_geologia', pal: ERA_COR, catNome: 'era'},
+    {k: 'hidro', nome: 'Domínios hidrogeológicos', sub: 'cor pelo domínio (GeoSGB) · 9 MB', cor: '#5DA9D6', lazy: 'sgb_hidro', pal: HIDRO_COR, catNome: 'domínio'},
+  ];
+  SGB_COV.forEach(d => { d.cov = true; });
+  const SGB_POLY = SGB_COV.concat(SGB_AREA);  // drawing order: background maps first
+  const SGB_ALL = SGB_PT.concat(SGB_POLY), SGB_DEF = Object.fromEntries(SGB_ALL.map(d => [d.k, d]));
 
   let DOCS, PTS, PROC, MUNREF, META, TOPO, SGB = null;
   const S = {
     layers: {pontos: true, processos: true, municipios: false}, modo: 'hex', hexKm: 50, metrica: 'docs',
     tipos: new Set(), precisao: new Set([0, 1]), ufconf: false, info: new Set(), comm: new Set(),
     anoMin: 0, anoMax: 9999, soNovos: false, busca: '', sel: null,
-    sgb: Object.fromEntries(SGB_ALL.map(d => [d.k, false])), geoqCl: new Set(), ocIm: new Set(),
+    sgb: Object.fromEntries(SGB_ALL.map(d => [d.k, false])), geoqCl: new Set(), ocIm: new Set(), folEsc: new Set(),
     vmin: null, vmax: null,                                  // show only areas whose value is within [vmin, vmax]
     scale: {hex: {lo: null, hi: null}, mun: {lo: null, hi: null}},  // manual colour-scale ends (null = data extremes)
   };
   let svg, gRoot, gMun, gHex, gMark, projection, pxPerKm, zoomK = 1, zoom, munPaths, munFeatures;
   let F = null; // current filtered data
-  let gOvl, canvas, W0, H0, zT = d3.zoomIdentity, sgbTree = null, sgbTip = false, drawPending = false;
+  let gCov, gOvl, canvas, W0, H0, zT = d3.zoomIdentity, sgbTree = null, sgbTip = false, drawPending = false;
 
   // ---------- load ----------
   // the SGB files are optional: without them the dashboard works as before
   const optional = url => d3.json(url).catch(() => null);
   Promise.all(['docs', 'pontos', 'processos', 'municipios', 'meta'].map(n => d3.json(`data/${n}.json`))
-    .concat(d3.json('data/brasil_municipios.topojson'), optional('data/sgb.json'), optional('data/sgb_geoquimica.json')))
-    .then(([docs, pts, proc, mun, meta, topo, sgb, geoq]) => {
+    .concat(d3.json('data/brasil_municipios.topojson'), optional('data/sgb.json')))
+    .then(([docs, pts, proc, mun, meta, topo, sgb]) => {
       DOCS = docs; PTS = pts; PROC = proc; MUNREF = mun; META = meta; TOPO = topo;
-      if (sgb) prepSgb(sgb, geoq);
+      if (sgb) prepSgb(sgb);
       DOCS.forEach(d => { d.y = +d.d.slice(0, 4) || 0; d.h = `${d.t} ${d.e} ${d.pr}`.toLowerCase(); });
       S.tipos = new Set(META.tipos.map((_, i) => i));
       S.anoMin = META.ano_min; S.anoMax = META.ano_max;
@@ -67,32 +83,70 @@
     .catch(err => { $('loading').textContent = 'erro ao carregar dados: ' + err; console.error(err); });
 
   // ---------- SGB data ----------
-  function prepSgb(sgb, geoq) {
+  function prepSgb(sgb) {
     SGB = sgb;
-    const L = sgb.camadas;
-    if (geoq) L.geoq = geoq; else delete L.geoq;
-    const comm = sgb.comm;
-    SGB_PT.forEach(d => {
-      const o = L[d.k]; if (!o) return;
-      o.n = o.x.length;
-      // haystack for the free-text search
-      if (d.k === 'ocorr') o.h = o.x.map((_, i) => `${o.nm[i]} ${o.mun[i]} ${o.uf[i]} ${o.ro[i]} ${o.c[i].map(c => comm[c]).join(' ')}`.toLowerCase());
-      if (d.k === 'recmin') o.h = o.x.map((_, i) => `${o.nm[i]} ${o.ce[i]} ${o.ot[i]} ${o.c[i].map(c => comm[c]).join(' ')}`.toLowerCase());
-      if (d.k === 'geocron') o.h = o.x.map((_, i) => `${o.am[i]} ${o.ro[i]} ${o.me[i]}`.toLowerCase());
-      if (d.k === 'geoq') o.pj_l.forEach(p => { p.h = `${p.t} ${p.doc >= 0 ? sgb.docs[p.doc].t : ''}`.toLowerCase(); });
-      if (d.k === 'mt') o.pj_h = o.pj_l.map(t => t.toLowerCase());
-      if (o.c) o.cn = o.c.map(cs => cs.map(c => comm[c]));
-    });
-    SGB_AREA.forEach(d => (L[d.k] || []).forEach(a => {
-      a.hs = `${a.t} ${a.cod || ''} ${a.prov || ''} ${a.ct || ''} ${a.doc >= 0 ? sgb.docs[a.doc].t : ''}`.toLowerCase();
+    SGB.cat = {};
+    SGB_PT.forEach(d => SGB.camadas[d.k] && prepPoints(d.k));
+    SGB_POLY.forEach(d => SGB.camadas[d.k] && prepAreas(d.k));
+    const L = SGB.camadas;
+    S.ocIm = new Set(L.ocorr ? L.ocorr.im_l.map((_, i) => i) : []);
+    S.folEsc = new Set(L.folhas ? L.folhas.map(a => a.esc) : []);
+  }
+  function prepPoints(k) {
+    const o = SGB.camadas[k], comm = SGB.comm, docT = di => di >= 0 ? SGB.docs[di].t : '';
+    o.n = o.x.length;
+    // haystack for the free-text search
+    const hay = f => { o.h = []; for (let i = 0; i < o.n; i++) o.h.push(f(i).toLowerCase()); };
+    if (k === 'ocorr') hay(i => `${o.nm[i]} ${o.mun[i]} ${o.uf[i]} ${o.ro[i]} ${o.c[i].map(c => comm[c]).join(' ')}`);
+    if (k === 'recmin') hay(i => `${o.nm[i]} ${o.ce[i]} ${o.ot[i]} ${o.c[i].map(c => comm[c]).join(' ')}`);
+    if (k === 'geocron') hay(i => `${o.am[i]} ${o.ro[i]} ${o.me[i]}`);
+    if (k === 'pocos') hay(i => `${o.nm[i]} ${o.aq[i]} ${o.mun[i]} ${o.uf[i]} ${o.nat_l[o.nat[i]]} ${o.uso[i]} ${o.src_l[o.src[i]]}`);
+    if (k === 'fontes') hay(i => `${o.nm[i]} ${o.uf[i]} fonte hidromineral`);
+    if (k === 'geoq') o.pj_l.forEach(p => { p.h = `${p.t} ${docT(p.doc)}`.toLowerCase(); });
+    if (k === 'mt') o.pj_h = o.pj_l.map(t => t.toLowerCase());
+    if (o.c) o.cn = o.c.map(cs => cs.map(c => comm[c]));
+    if (projection) projectPoints(k);
+  }
+  function projectPoints(k) {
+    const o = SGB.camadas[k];
+    o.px = new Float32Array(o.n); o.py = new Float32Array(o.n);
+    for (let i = 0; i < o.n; i++) { const xy = projection([o.x[i], o.y[i]]); o.px[i] = xy[0]; o.py[i] = xy[1]; }
+  }
+  function prepAreas(k) {
+    const docT = di => di >= 0 ? SGB.docs[di].t : '', cat = SGB.cat[k] || [];
+    SGB.camadas[k].forEach(a => {
+      a.hs = [a.t, a.cod, a.esc, a.prov, a.pg, a.ug, a.uf, a.ct, a.s, a.li, a.sd, a.am, cat[a.c], docT(a.doc ?? -1)]
+        .filter(Boolean).join(' ').toLowerCase();
       a.bb = [Infinity, Infinity, -Infinity, -Infinity];
       a.g.forEach(r => r.forEach(([x, y]) => { a.bb[0] = Math.min(a.bb[0], x); a.bb[1] = Math.min(a.bb[1], y); a.bb[2] = Math.max(a.bb[2], x); a.bb[3] = Math.max(a.bb[3], y); }));
-    }));
-    S.geoqCl = new Set(L.geoq ? L.geoq.cl_l.map((_, i) => i) : []);
-    S.ocIm = new Set(L.ocorr ? L.ocorr.im_l.map((_, i) => i) : []);
+    });
+    if (projection) projectAreas(k);
+  }
+  function projectAreas(k) {
+    SGB.camadas[k].forEach(a => {
+      a.d = a.g.map(r => 'M' + r.map(c => projection(c).map(v => v.toFixed(1)).join(',')).join('L') + 'Z').join('');
+    });
+  }
+  // fetch a layer that lives in its own file (big ones), once
+  const lazyLoads = {};
+  function loadLazy(d) {
+    if (!lazyLoads[d.k]) lazyLoads[d.k] = d3.json(`data/${d.lazy}.json`).then(data => {
+      if (d.cov) { SGB.camadas[d.k] = data.items; SGB.cat[d.k] = data.cat_l; prepAreas(d.k); }
+      else { SGB.camadas[d.k] = data; prepPoints(d.k); }
+      if (d.k === 'geoq') buildGeoqChips();
+    }).catch(err => { delete lazyLoads[d.k]; throw err; });
+    return lazyLoads[d.k];
+  }
+  function buildGeoqChips() {
+    const o = SGB.camadas.geoq, n = o.cl_l.map(() => 0);
+    o.cl.forEach(c => n[c]++);
+    S.geoqCl = new Set(o.cl_l.map((_, i) => i));
+    $('chipsGeoq').innerHTML = '';
+    o.cl_l.map((t, i) => [t, i]).sort((a, b) => n[b[1]] - n[a[1]])
+      .forEach(([t, i]) => chip($('chipsGeoq'), t, true, () => toggle(S.geoqCl, i)).insertAdjacentHTML('beforeend', ` <span class="n">${fmt(n[i])}</span>`));
   }
   const sgbOn = () => SGB_PT.some(d => S.sgb[d.k]);
-  const sgbAreasOn = () => SGB_AREA.some(d => S.sgb[d.k]);
+  const sgbAreasOn = () => SGB_POLY.some(d => S.sgb[d.k]);
   const sgbMetric = () => S.metrica === 'tipos' || S.metrica === 'registros';
 
   function buildSgbControls() {
@@ -100,14 +154,23 @@
     const L = SGB.camadas;
     $('sgbGroup').hidden = false; $('sgbFiltros').hidden = false; $('commNota').hidden = false;
     $('sgbGerado').textContent = `Bases SGB exportadas em ${SGB.gerado}.`;
-    const item = (box, d, n, area) => {
+    const nOf = d => SGB.n?.[d.k] ?? (L[d.k] ? (L[d.k].n ?? L[d.k].length) : 0);
+    const item = (box, d, area) => {
       const lab = document.createElement('label');
       lab.className = 'layer-item';
+      const sub = d.k === 'pocos' && L.pocos ? `${d.sub} · SIAGAS só ${L.pocos.siagas_ufs.join(', ') || '—'}; RIMAS no país` : d.sub;
       lab.innerHTML = `<input type="checkbox" data-sgb="${d.k}"><span class="sw${area ? ' area' : ''}" style="background:${d.cor};border-color:${d.cor}"></span>
-        <span><b>${esc(d.nome)}<span class="n">${fmt(n)}</span></b><small>${esc(d.sub)}</small></span>`;
-      lab.querySelector('input').onchange = e => {
+        <span><b>${esc(d.nome)}<span class="n">${fmt(nOf(d))}</span></b><small>${esc(sub)}</small></span>`;
+      const inp = lab.querySelector('input'), small = lab.querySelector('small');
+      inp.onchange = async () => {
+        if (inp.checked && d.lazy && !L[d.k]) {
+          small.textContent = 'carregando…'; inp.disabled = true;
+          try { await loadLazy(d); small.textContent = sub; }
+          catch (err) { console.error(err); small.textContent = 'erro ao carregar — tente de novo'; inp.checked = false; }
+          inp.disabled = false;
+        }
         const wasOn = sgbOn();
-        S.sgb[d.k] = e.target.checked;
+        S.sgb[d.k] = inp.checked;
         // the SEDAR metrics ignore SGB points: switch the colour to "Tipos de dado" when the first SGB point layer goes on
         if (!area && !wasOn && sgbOn() && !sgbMetric()) setMetric('tipos');
         $('sgbNone').hidden = !sgbOn() && !sgbAreasOn();
@@ -115,16 +178,17 @@
       };
       box.appendChild(lab);
     };
-    SGB_PT.forEach(d => L[d.k] && item($('sgbPontos'), d, L[d.k].n, false));
-    SGB_AREA.forEach(d => L[d.k] && item($('sgbAreas'), d, L[d.k].length, true));
+    const has = d => L[d.k] || (d.lazy && nOf(d));
+    SGB_PT.forEach(d => has(d) && item($('sgbPontos'), d, false));
+    SGB_AREA.forEach(d => has(d) && item($('sgbAreas'), d, true));
+    SGB_COV.forEach(d => has(d) && item($('sgbFundo'), d, true));
     $('sgbNone').onclick = () => {
       document.querySelectorAll('input[data-sgb]').forEach(i => { i.checked = false; S.sgb[i.dataset.sgb] = false; });
       $('sgbNone').hidden = true; update();
     };
-    if (L.geoq) {
-      const n = L.geoq.cl_l.map(() => 0); L.geoq.cl.forEach(c => n[c]++);
-      L.geoq.cl_l.map((t, i) => [t, i]).sort((a, b) => n[b[1]] - n[a[1]])
-        .forEach(([t, i]) => chip($('chipsGeoq'), t, true, () => toggle(S.geoqCl, i)).insertAdjacentHTML('beforeend', ` <span class="n">${fmt(n[i])}</span>`));
+    if (L.folhas) {
+      const n = d3.rollup(L.folhas, v => v.length, a => a.esc);
+      [...n.keys()].forEach(e => chip($('chipsFolhas'), e, true, () => toggle(S.folEsc, e)).insertAdjacentHTML('beforeend', ` <span class="n">${fmt(n.get(e))}</span>`));
     }
     if (L.ocorr) {
       const n = L.ocorr.im_l.map(() => 0); L.ocorr.im.forEach(c => n[c]++);
@@ -204,6 +268,7 @@
       if (k === 'info') { S.info.clear(); setChips('chipsInfo', false); }
       if (k === 'comm') { S.comm.clear(); setChips('chipsComm', false); }
       if (k === 'geoqcl' && SGB?.camadas.geoq) { S.geoqCl = new Set(SGB.camadas.geoq.cl_l.map((_, i) => i)); setChips('chipsGeoq', true); }
+      if (k === 'folesc' && SGB?.camadas.folhas) { S.folEsc = new Set(SGB.camadas.folhas.map(a => a.esc)); setChips('chipsFolhas', true); }
       if (k === 'ocim' && SGB?.camadas.ocorr) { S.ocIm = new Set(SGB.camadas.ocorr.im_l.map((_, i) => i)); setChips('chipsOcorr', true); }
       update();
     });
@@ -273,6 +338,7 @@
       .attr('class', 'uf-line').attr('d', path).attr('vector-effect', 'non-scaling-stroke');
     gRoot.append('path').datum(topojson.mesh(TOPO, obj, (x, y) => x === y))
       .attr('class', 'br-line').attr('d', path).attr('vector-effect', 'non-scaling-stroke');
+    gCov = gRoot.insert('g', ':first-child');  // background maps under the municipalities (see .with-cov in the CSS)
     gOvl = gRoot.append('g');
     gHex = gRoot.append('g');
     gMark = gRoot.append('g');
@@ -283,14 +349,8 @@
       p.d = 'M' + p.g.map(c => projection(c).map(v => v.toFixed(1)).join(',')).join('L') + 'Z';
     });
     if (SGB) {
-      SGB_PT.forEach(d => {
-        const o = SGB.camadas[d.k]; if (!o) return;
-        o.px = new Float32Array(o.n); o.py = new Float32Array(o.n);
-        for (let i = 0; i < o.n; i++) { const xy = projection([o.x[i], o.y[i]]); o.px[i] = xy[0]; o.py[i] = xy[1]; }
-      });
-      SGB_AREA.forEach(d => (SGB.camadas[d.k] || []).forEach(a => {
-        a.d = a.g.map(r => 'M' + r.map(c => projection(c).map(v => v.toFixed(1)).join(',')).join('L') + 'Z').join('');
-      }));
+      SGB_PT.forEach(d => SGB.camadas[d.k] && projectPoints(d.k));
+      SGB_POLY.forEach(d => SGB.camadas[d.k] && projectAreas(d.k));
     }
 
     zoom = d3.zoom().scaleExtent([1, 80]).on('zoom', e => {
@@ -368,6 +428,8 @@
         for (let i = 0; i < o.n; i++) if (!q || o.h[i].includes(q)) idx.push(i);
       } else if (d.k === 'mt') {
         for (let i = 0; i < o.n; i++) if (!q || o.pj_h[o.pj[i]].includes(q)) idx.push(i);
+      } else if (o.h) {
+        for (let i = 0; i < o.n; i++) if (!q || o.h[i].includes(q)) idx.push(i);
       } else if (!q) {
         for (let i = 0; i < o.n; i++) idx.push(i);
       }
@@ -378,10 +440,13 @@
   function filterAreas() {
     const out = [];
     if (!SGB) return out;
-    SGB_AREA.forEach(d => {
+    SGB_POLY.forEach(d => {
       if (!S.sgb[d.k] || !SGB.camadas[d.k]) return;
-      if (d.k === 'distau' && S.comm.size && !S.comm.has('ouro')) return;
-      SGB.camadas[d.k].forEach((a, i) => { if (!S.busca || a.hs.includes(S.busca)) out.push({k: d.k, i, a}); });
+      if ((d.k === 'distau' || d.k === 'provau') && S.comm.size && !S.comm.has('ouro')) return;
+      SGB.camadas[d.k].forEach((a, i) => {
+        if (d.k === 'folhas' && !S.folEsc.has(a.esc)) return;
+        if (!S.busca || a.hs.includes(S.busca)) out.push({k: d.k, i, a});
+      });
     });
     return out;
   }
@@ -500,19 +565,36 @@
     const lt = $('legendTipos');
     const sgbPts = markers ? SGB_PT.filter(d => S.sgb[d.k] && F.sgb[d.k]) : [];
     const areas = SGB_AREA.filter(d => S.sgb[d.k] && SGB?.camadas[d.k]);
-    lt.hidden = !markers && !areas.length;
+    const covs = SGB_COV.filter(d => S.sgb[d.k] && SGB?.camadas[d.k]);
+    lt.hidden = !markers && !areas.length && !covs.length;
     lt.innerHTML = (markers ? '<span class="legend-name">tipo</span>' + META.tipos.map((t, i) => `<span><i style="background:${TIPO_COR[i]}"></i>${TIPO_NOME[t]}</span>`).join('')
-      + '<span><i style="background:var(--accent);opacity:.4;border-radius:2px"></i>processo ANM</span>' : '<span class="legend-name">áreas SGB</span>')
+      + '<span><i style="background:var(--accent);opacity:.4;border-radius:2px"></i>processo ANM</span>' : areas.length ? '<span class="legend-name">áreas SGB</span>' : '')
       + sgbPts.map(d => `<span><i style="background:${d.cor};border-radius:1px"></i>${esc(d.nome)}</span>`).join('')
-      + areas.map(d => `<span><i style="border:2px solid ${d.cor};background:transparent;border-radius:2px"></i>${esc(d.nome)}</span>`).join('');
+      + areas.map(d => `<span><i style="border:2px solid ${d.cor};background:transparent;border-radius:2px"></i>${esc(d.nome)}</span>`).join('')
+      + covs.map(d => `<span class="legend-name">${esc(d.nome)} (${d.catNome})</span>` + Object.entries(d.pal)
+        .filter(([c]) => SGB.cat[d.k].includes(c)).map(([c, cor]) => `<span><i style="background:${cor};border-radius:2px"></i>${esc(c)}</span>`).join('')).join('');
   }
 
   // SGB areas: outlines above the municipalities, under the heatmap and markers
+  const covColor = o => SGB_DEF[o.k].pal[SGB.cat[o.k][o.a.c]] || '#999';
   function renderAreas() {
-    gOvl.selectAll('path').data(F.areas, a => a.k + a.i).join('path')
+    const cov = F.areas.filter(o => SGB_DEF[o.k].cov), ovl = F.areas.filter(o => !SGB_DEF[o.k].cov);
+    // with a background map on, municipalities outside the choropleth become transparent and let events through
+    svg.classed('with-cov', cov.length > 0);
+    const tip = (e, o) => showTip(e, areaTip(o) + '<div class="muted">clique para ver tudo o que cobre este local</div>');
+    gCov.selectAll('path').data(cov, a => a.k + a.i).join('path')
+      .attr('class', 'cov').attr('d', o => o.a.d).attr('vector-effect', 'non-scaling-stroke')
+      .style('fill', covColor).style('stroke', covColor)
+      .on('mousemove', tip).on('mouseleave', hideTip)
+      .on('click', (e, o) => {
+        e.stopPropagation();
+        const hit = S.modo === 'marcadores' && nearestSgb(e);
+        if (hit) selectSgbPoint(hit); else selectAreasAt(e, e.currentTarget);
+      });
+    gOvl.selectAll('path').data(ovl, a => a.k + a.i).join('path')
       .attr('class', 'ovl').attr('d', o => o.a.d).attr('vector-effect', 'non-scaling-stroke')
       .style('fill', o => SGB_DEF[o.k].cor).style('stroke', o => SGB_DEF[o.k].cor)
-      .on('mousemove', (e, o) => showTip(e, areaTip(o) + '<div class="muted">clique para ver todas as áreas que cobrem este local</div>'))
+      .on('mousemove', tip)
       .on('mouseleave', hideTip)
       .on('click', (e, o) => {
         e.stopPropagation();
@@ -529,7 +611,9 @@
     return ins;
   }
   function areasAt(lon, lat) {
-    return (F.areas || []).filter(({a}) => lon >= a.bb[0] && lon <= a.bb[2] && lat >= a.bb[1] && lat <= a.bb[3] && a.g.some(r => inRing(lon, lat, r)));
+    // even-odd over all rings, like the drawing: a point inside a hole is outside the polygon
+    return (F.areas || []).filter(({a}) => lon >= a.bb[0] && lon <= a.bb[2] && lat >= a.bb[1] && lat <= a.bb[3]
+      && a.g.reduce((n, r) => n + inRing(lon, lat, r), 0) % 2 === 1);
   }
   const lonLatOf = e => projection.invert(d3.pointer(e, gRoot.node()));
 
@@ -624,14 +708,26 @@
     if (k === 'geocron') return `<b>${esc(o.am[i])}</b> — ${esc(o.ro[i])}<br>${esc(o.me[i] || 'método não informado')}<br>${where}`;
     if (k === 'grav') return `<b>Estação gravimétrica</b>${o.b[i] != null ? `<br>anomalia Bouguer ${o.b[i]} mGal` : ''}<br>${where}`;
     if (k === 'mt') return `<b>Estação ${esc(o.s[i])}</b> — ${esc(o.pj_l[o.pj[i]])}<br>${esc(o.d[i])} · ${esc(o.ins[i])}<br>${where}`;
+    if (k === 'pocos') return `<b>${esc(o.nm[i] || o.pid[i])}</b> — ${esc(o.nat_l[o.nat[i]])}<br>${o.pr[i] != null ? `${o.pr[i]} m · ` : ''}${esc(o.aq[i] || 'aquífero não informado')} · ${esc(o.mun[i])}/${o.uf[i]}<br>${where} · ${o.src_l[o.src[i]]}`;
+    if (k === 'fontes') return `<b>${esc(o.nm[i])}/${o.uf[i]}</b><br>${fmt(o.q[i])} fontes hidrominerais<br>${where}`;
     return '';
+  }
+  const fmtMa = v => v >= 100 ? fmt(Math.round(v)) : d3.format('.3~r')(v);
+  function geolIdade(a) {
+    const era = SGB.cat.geol[a.c], eras = a.e0 && a.e0 !== era ? `${era} a ${a.e0}` : era;
+    const has = a.i1 != null && !(a.i1 === 0 && !a.i0);  // 0–0 means age not informed
+    const ma = has ? ` · ${a.i0 != null && a.i0 !== a.i1 ? `${fmtMa(a.i1)}–${fmtMa(a.i0)}` : fmtMa(a.i1)} Ma` : '';
+    return esc(eras) + ma;
   }
   function areaTip({k, a}) {
     const d = SGB_DEF[k];
     if (k === 'aero') return `<b>${esc(a.t)}</b><br>${esc(a.m)} · ${esc(a.a)}${a.lv ? ` · linhas a ${esc(a.lv)} m` : ''}<br><span class="muted">${d.nome} · ${esc(a.ct)} · ${esc(a.s.toLowerCase())}</span>`;
     if (k === 'geoqproj') return `<b>${esc(a.t)}</b><br>escala ${esc(a.esc)} · ${a.a0}${a.a1 && a.a1 !== a.a0 ? '–' + a.a1 : ''}<br><span class="muted">${d.nome}</span>`;
-    if (k === 'folhas50') return `<b>${esc(a.cod)} — ${esc(a.t)}</b><br>${esc(a.a)}<br><span class="muted">${d.nome}</span>`;
+    if (k === 'folhas') return `<b>${esc(a.cod)}</b> — ${esc(a.t)}<br>${a.esc} · ${esc(a.a)}<br><span class="muted">${d.nome}</span>`;
     if (k === 'distau') return `<b>Distrito ${esc(a.t)}</b><br>província ${esc(a.prov)} · ${esc(a.ug)} · ${esc(a.uf)}<br><span class="muted">${d.nome}</span>`;
+    if (k === 'provau') return `<b>${esc(a.t)}</b><br>${esc(a.pg)} · ${esc(a.uf)}<br><span class="muted">${d.nome}</span>`;
+    if (k === 'geol') return `<b>${esc(a.t)}</b> <span class="muted">(${esc(a.s)})</span><br>${geolIdade(a)}${a.li ? '<br>' + esc(a.li) : ''}<br><span class="muted">${d.nome}</span>`;
+    if (k === 'hidro') return `<b>${esc(a.t)}</b> <span class="muted">(${esc(a.s)})</span><br>domínio ${esc(SGB.cat.hidro[a.c])}${a.sd && a.sd !== SGB.cat.hidro[a.c] ? ' · ' + esc(a.sd) : ''}${a.po ? ` · potencial ${esc(a.po.toLowerCase())}` : ''}<br><span class="muted">${d.nome}</span>`;
     return '';
   }
   function ptTip(o) {
@@ -766,6 +862,16 @@
       } else if (d.k === 'grav') {
         const b = idx.map(i => o.b[i]).filter(v => v != null);
         body = `<ul><li>${fmt(idx.length)} estações gravimétricas${b.length ? ` · anomalia Bouguer de ${d3.min(b)} a ${d3.max(b)} mGal (mediana ${d3.median(b).toFixed(1)})` : ''}</li></ul>`;
+      } else if (d.k === 'pocos') {
+        const pr = idx.map(i => o.pr[i]).filter(v => v != null);
+        const nat = countBy(idx, i => o.nat_l[o.nat[i]]).map(([c, n]) => `${fmt(n)} ${esc(c.toLowerCase())}`).join(', ');
+        const aq = countBy(idx.filter(i => o.aq[i]), i => o.aq[i]).slice(0, 5).map(([c, n]) => `${esc(c)} (${fmt(n)})`).join(', ');
+        const siagas = i => o.src_l[o.src[i]] === 'SIAGAS' && o.pid[i] ? ` <a href="https://siagasweb.sgb.gov.br/layout/detalhe.php?ponto=${encodeURIComponent(o.pid[i])}" target="_blank" rel="noopener">ficha SIAGAS</a>` : '';
+        body = `<p class="sub-note">${nat}${pr.length ? ` · profundidade mediana ${d3.median(pr).toFixed(0)} m (máx. ${fmt(d3.max(pr))} m)` : ''}${aq ? ` · aquíferos: ${aq}` : ''}</p><ul>`
+          + [...idx].sort((a, b) => (o.pr[b] ?? -1) - (o.pr[a] ?? -1)).slice(0, MAXL).map(i => `<li><b>${esc(o.nm[i] || o.pid[i])}</b> — ${esc(o.nat_l[o.nat[i]])}${o.pr[i] != null ? ` · ${o.pr[i]} m` : ''}${o.aq[i] ? ` · ${esc(o.aq[i])}` : ''} <span class="muted">· ${esc(o.sit[i])}${o.uso[i] ? ' · ' + esc(o.uso[i]) : ''} · ${esc(o.mun[i])}/${o.uf[i]} · ${o.src_l[o.src[i]]}</span>${siagas(i)}</li>`).join('')
+          + more(idx.length, MAXL) + '</ul>';
+      } else if (d.k === 'fontes') {
+        body = '<ul>' + idx.map(i => `<li><b>${esc(o.nm[i])}/${o.uf[i]}</b> — ${fmt(o.q[i])} fontes hidrominerais cadastradas</li>`).join('') + '</ul>';
       } else if (d.k === 'mt') {
         body = '<ul>' + countBy(idx, i => o.pj[i]).map(([pj, n]) => {
           const ds = idx.filter(i => o.pj[i] === pj).map(i => o.d[i]).filter(Boolean).sort();
@@ -774,13 +880,17 @@
       }
       parts.push(block(d, idx.length, body, open));
     }
-    for (const d of SGB_AREA) {
+    for (const d of SGB_COV.concat(SGB_AREA)) {
       const as = (sel.areas || []).filter(x => x.k === d.k); if (!as.length) continue;
       let li;
       if (d.k === 'aero') li = ({a}) => `<li><b>${esc(a.t)}</b> — ${esc(a.m)} · ${esc(a.a)}${a.km2 ? ` · ${fmt(+a.km2)} km²` : ''}${a.lv ? ` · linhas a ${esc(a.lv)} m` : ''}${a.h ? `, voo a ${esc(a.h)} m` : ''} <span class="muted">· ${esc(a.ct)} · ${esc(a.s.toLowerCase())} · projeto ${esc(a.id)}</span></li>`;
       if (d.k === 'geoqproj') li = ({a}) => `<li><b>${esc(a.t)}</b> — escala ${esc(a.esc)} · ${a.a0}${a.a1 && a.a1 !== a.a0 ? '–' + a.a1 : ''} <span class="muted">· ${esc(a.ue)}</span>${a.doc >= 0 ? '<br>relatório: ' + rigeo(a.doc) : ''}</li>`;
-      if (d.k === 'folhas50') li = ({a}) => `<li><b>${esc(a.cod)} — ${esc(a.t)}</b> · ${esc(a.a)}${a.doc >= 0 ? '<br>mapa/relatório: ' + rigeo(a.doc) : ''}</li>`;
+      if (d.k === 'folhas') li = ({a}) => `<li><b>${esc(a.cod)}</b> — ${esc(a.t)} · ${a.esc} · ${esc(a.a)}${a.doc >= 0 ? '<br>mapa/relatório: ' + rigeo(a.doc) : ''}`
+        + `${a.pdf ? `<br><a href="${esc(a.pdf)}" target="_blank" rel="noopener">PDF do mapa</a>` : ''}${a.sig ? ` · <a href="${esc(a.sig)}" target="_blank" rel="noopener">SIG (shapefile)</a>` : ''}</li>`;
       if (d.k === 'distau') li = ({a}) => `<li><b>Distrito ${esc(a.t)}</b> — província ${esc(a.prov)} · ${esc(a.ug)} · ${esc(a.uf)}</li>`;
+      if (d.k === 'provau') li = ({a}) => `<li><b>${esc(a.t)}</b> — ${esc(a.pg)} · ${esc(a.uf)}</li>`;
+      if (d.k === 'geol') li = ({a}) => `<li><b>${esc(a.t)}</b> (${esc(a.s)}) — ${geolIdade(a)}${a.hi ? ` · ${esc(a.hi)}` : ''}${a.li ? `<br><span class="muted">litotipos: ${esc(a.li)}</span>` : ''}${a.am ? `<br><span class="muted">ambiente tectônico: ${esc(a.am)}</span>` : ''}</li>`;
+      if (d.k === 'hidro') li = ({a}) => `<li><b>${esc(a.t)}</b> (${esc(a.s)}) — domínio ${esc(SGB.cat.hidro[a.c])}${a.sd ? ` · subdomínio ${esc(a.sd)}` : ''}${a.po ? ` · potencial ${esc(a.po.toLowerCase())}` : ''}</li>`;
       const s = [...as].sort((x, y) => String(y.a.a || y.a.a1 || '').localeCompare(String(x.a.a || x.a.a1 || '')));
       parts.push(block(d, as.length, '<ul>' + s.slice(0, MAXL).map(li).join('') + more(s.length, MAXL) + '</ul>', open || as.length <= 5));
     }

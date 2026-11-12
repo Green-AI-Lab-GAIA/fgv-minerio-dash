@@ -3,16 +3,21 @@
 Reads the scrapers' data directory (default: <repo>/data, override with --dados or SGB_DATA) and writes:
   data/sgb.json            RIGeo reports cited by the layers, commodity list and the smaller layers:
                            ocorrências minerais, recursos minerais PDAC 2024, geocronologia, gravimetria,
-                           magnetotelúrico (points) and aerolevantamentos, projetos geoquímicos,
-                           folhas geológicas 1:50.000, distritos auríferos (polygons)
+                           magnetotelúrico, poços (SIAGAS + RIMAS), fontes hidrominerais (points) and
+                           aerolevantamentos, projetos geoquímicos, folhas geológicas 1:50.000 a 1:1.000.000,
+                           distritos e províncias auríferas (polygons)
   data/sgb_geoquimica.json the ~365 mil geochemical samples (columnar) and their projects
+  data/sgb_geologia.json   Geologia do Brasil 1:2.500.000 (litoestratigrafia), loaded by the page on demand
+  data/sgb_hidro.json      domínios hidrogeológicos, loaded by the page on demand
 Every layer is columnar or a short list; coordinates are SIRGAS 2000/WGS84 lon/lat rounded to 4 decimals (~11 m).
-Polygons keep only exterior rings, simplified with Douglas-Peucker. RIGeo metadata (rigeo/rigeo_all.jsonl) is
-joined through the handles cited by each layer (geochemistry, geochemical projects, 1:50k sheets).
+Polygons are simplified with Douglas-Peucker; the small layers keep exterior rings only, the two country-wide maps
+keep holes too (the page fills with the even-odd rule). Map sheets without geometry (1:100k, 1:250k, 1:1M) get the
+rectangle given by their code in the systematic mapping index (e.g. SI-22-V-A-I). RIGeo metadata
+(rigeo/rigeo_all.jsonl) is joined through the handles cited by each layer (geochemistry, projects, map sheets).
 
 Needs only the Python standard library. Run: ./run.sh --preparar-sgb   (or python3 preparar_sgb.py --dados DIR)
 """
-import argparse, csv, datetime, json, os, re, sys
+import argparse, csv, datetime, glob, json, os, re, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, 'data')
@@ -71,21 +76,65 @@ def simplify(pts, tol):
     return [p for p, k in zip(pts, keep) if k]
 
 
-def rings(geom, tol=TOL):
-    """Exterior rings of a (Multi)Polygon, simplified and rounded; tiny parts dropped."""
+def rings(geom, tol=TOL, holes=False, nd=4, min_part=0):
+    """Rings of a (Multi)Polygon, simplified and rounded to nd decimals. Exterior rings only unless holes=True;
+    holes smaller than 2*tol and extra parts smaller than min_part degrees are dropped (the first exterior ring
+    survives as is if nothing else is left)."""
     if not geom:
         return []
     polys = geom['coordinates'] if geom['type'] == 'MultiPolygon' else [geom['coordinates']] if geom['type'] == 'Polygon' else []
     out = []
     for poly in polys:
-        if not poly:
-            continue
-        ring = simplify(poly[0], tol)
-        if len(ring) >= 4:
-            out.append([[r4(x), r4(y)] for x, y, *_ in ring])
+        for k, ring in enumerate(poly if holes else poly[:1]):
+            xs, ys = [c[0] for c in ring], [c[1] for c in ring]
+            size = max(max(xs) - min(xs), max(ys) - min(ys))
+            if (k and size < 2 * tol) or (not k and out and size < min_part):
+                if not k:
+                    break  # exterior dropped: its holes must go too, or they would be filled as land
+                continue  # hole too small to see
+            r = simplify(ring, tol)
+            if len(r) >= 4:
+                out.append([[round(x, nd), round(y, nd)] for x, y, *_ in r])
+            elif not k:
+                break
     if not out and polys and polys[0]:  # keep at least something for very small polygons
         out.append([[r4(x), r4(y)] for x, y, *_ in polys[0][0]])
     return out
+
+
+def stream_features(path):
+    """Features of a GeoJSON written by scrapers_sgb (one feature per line), without loading the whole file."""
+    with open(path, encoding='utf-8') as fh:
+        for line in fh:
+            line = line.strip().rstrip(',')
+            if line.startswith('{"type":"Feature"') or line.startswith('{"type": "Feature"'):
+                yield json.loads(line)
+
+
+def sheet_bbox(code):
+    """[minx, miny, maxx, maxy] of a sheet of the international / Brazilian systematic mapping index.
+    1:1M 'SI-22' (6° x 4°) > 1:500k V X / Y Z (3° x 2°) > 1:250k A B / C D (1.5° x 1°) >
+    1:100k I II III / IV V VI (0.5° x 0.5°) > 1:50k 1 2 / 3 4 (0.25° x 0.25°). None if the code is not valid."""
+    m = re.fullmatch(r'([NS])([A-V])-(\d{1,2})((?:-[A-Z0-9]+)*)', (code or '').strip().upper())
+    if not m:
+        return None
+    hemi, band, zone, rest = m.group(1), ord(m.group(2)) - ord('A'), int(m.group(3)), m.group(4)
+    if not 1 <= zone <= 60:
+        return None
+    x0, w, h = -180 + (zone - 1) * 6, 6.0, 4.0
+    y0 = band * 4 if hemi == 'N' else -(band + 1) * 4
+    # every level splits the parent sheet into 2 rows (counted from the north) and 2 or 3 columns
+    levels = [(list('VXYZ'), 2), (list('ABCD'), 2), (['I', 'II', 'III', 'IV', 'V', 'VI'], 3), (['1', '2', '3', '4'], 2)]
+    parts = [p for p in rest.split('-') if p]
+    if len(parts) > len(levels):
+        return None
+    for part, (names, cols) in zip(parts, levels):
+        if part not in names:
+            return None
+        row, col = divmod(names.index(part), cols)
+        w, h = w / cols, h / 2
+        x0, y0 = x0 + col * w, y0 + (1 - row) * h
+    return [x0, y0, x0 + w, y0 + h]
 
 
 class Index:
@@ -246,16 +295,89 @@ def main():
                            doc=doc(q.get('url_rigeo')), g=g))
     L['geoqproj'] = gp
 
-    path = p('pdac', 'layers', 'geology_50k.geojson')
-    if os.path.exists(path):
-        fl = []
+    # geological map sheets (PDAC): 1:50k has geometry; the others get the rectangle of their sheet code(s)
+    fl, sem_geo = [], []
+    for esc, name in (('1:50.000', 'geology_50k'), ('1:100.000', 'geology_100k'), ('1:250.000', 'geology_250k'),
+                      ('1:1.000.000', 'geology_1m')):
+        path = p('pdac', 'layers', name + '.geojson')
+        if not os.path.exists(path):
+            continue
         for f in features(path):
             q = f['properties']
+            code = (q.get('COD_FOLHA') or '').strip()
             g = rings(f.get('geometry'), 0.0005)
+            if not g:
+                for c in dict.fromkeys(re.findall(r'[NS][A-V][.-]\d{1,2}(?:-[A-Z0-9]+)*', code.upper())):  # unique, in order
+                    bb = sheet_bbox(c.replace('.', '-'))
+                    if bb:
+                        x0, y0, x1, y1 = bb
+                        g.append([[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]])
+            if not g:
+                sem_geo.append(f'{name}: {code!r}')
+                continue
+            pdf, sig = (q.get('GEOSGB_PDF') or '').strip(), (q.get('GEOSGB_SIG') or '').strip()
+            fl.append(dict(t=q.get('PROJETO') or '', cod=code, esc=esc, a=q.get('ANO_FIM') or q.get('ANO_MAPA') or '',
+                           doc=doc(pdf), pdf=pdf if pdf.startswith('http') and not handle(pdf) else '',
+                           sig=sig if sig.startswith('http') else '', g=g))
+    if sem_geo:
+        print(f'{len(sem_geo)} folhas sem código válido nem geometria (ignoradas):', '; '.join(sem_geo[:8]), file=sys.stderr)
+    L['folhas'] = fl
+
+    path = p('p3mgeo', 'camadas', 'vw_cprm_au_prov_br.geojson')
+    if os.path.exists(path):
+        L['provau'] = [dict(t=q.get('prov_aurif') or '', pg=q.get('provin_geo') or '', uf=q.get('local_') or '', g=g)
+                       for f in features(path) for q, g in [(f['properties'], rings(f.get('geometry')))] if g]
+
+    # ---- poços (SIAGAS, only the states that were downloaded, and RIMAS) and hydromineral springs
+    nat, fonte = Index(), Index()
+    o = dict(x=[], y=[], nm=[], nat=[], aq=[], pr=[], mun=[], uf=[], sit=[], uso=[], src=[], pid=[])
+    seen = set()
+
+    def poco(x, y, pid, nm, natureza, aq, prof, mun, uf, sit, uso, src):
+        if pid and pid in seen:
+            return
+        seen.add(pid)
+        try:
+            prof = round(float(prof), 1) if prof not in (None, '') else None
+        except (TypeError, ValueError):
+            prof = None
+        o['x'].append(r4(x)); o['y'].append(r4(y)); o['nm'].append((nm or '')[:40]); o['nat'].append(nat(natureza or 'Não informado'))
+        o['aq'].append(aq or ''); o['pr'].append(prof); o['mun'].append(mun or ''); o['uf'].append(uf or '')
+        o['sit'].append(sit or ''); o['uso'].append(uso or ''); o['src'].append(fonte(src)); o['pid'].append(pid)
+
+    ufs = []
+    for path in sorted(glob.glob(p('geosgb', 'hidrogeologia', 'siagas*.csv'))):
+        for r in csv.DictReader(open(path, encoding='utf-8-sig')):
+            try:
+                x, y = float(r.get('_lon') or r.get('longitude')), float(r.get('_lat') or r.get('latitude'))
+            except (TypeError, ValueError):
+                continue
+            poco(x, y, str(r.get('idt_ponto') or ''), r.get('nome_ponto'), r.get('natureza_ponto'), r.get('aquifero'),
+                 r.get('profundidade_m'), r.get('municipio'), r.get('uf'), r.get('situacao'), r.get('uso_agua'), 'SIAGAS')
+            if r.get('uf') and r['uf'] not in ufs:
+                ufs.append(r['uf'])
+    path = p('geosgb', 'hidrogeologia', 'rimas.geojson')
+    if os.path.exists(path):
+        for f in features(path):
+            g, q = f.get('geometry'), f['properties']
             if g:
-                fl.append(dict(t=q.get('PROJETO') or '', cod=q.get('COD_FOLHA') or '', a=q.get('ANO_FIM') or q.get('ANO_MAPA') or '',
-                               doc=doc(q.get('GEOSGB_PDF')), g=g))
-        L['folhas50'] = fl
+                # RIMAS has no aquifer field (str_bacia is the river basin)
+                poco(g['coordinates'][0], g['coordinates'][1], str(q.get('idt_ponto') or ''), q.get('str_nome_ponto'),
+                     q.get('str_natureza_ponto'), '', q.get('num_profundidade'), q.get('str_municipio'),
+                     q.get('str_uf'), q.get('str_tipo_situacao'), q.get('str_uso_agua'), 'RIMAS')
+    if o['x']:
+        o.update(nat_l=nat.items, src_l=fonte.items, siagas_ufs=ufs)
+        L['pocos'] = o
+
+    path = p('geosgb', 'hidrogeologia', 'fontes_hidrominerais.geojson')
+    if os.path.exists(path):
+        o = dict(x=[], y=[], nm=[], uf=[], q=[])
+        for f in features(path):
+            g, q = f.get('geometry'), f['properties']
+            if g:
+                o['x'].append(r4(g['coordinates'][0])); o['y'].append(r4(g['coordinates'][1]))
+                o['nm'].append(q.get('cidade') or ''); o['uf'].append(q.get('uf') or ''); o['q'].append(q.get('quantd') or 0)
+        L['fontes'] = o
 
     path = p('p3mgeo', 'camadas', 'vw_cprm_au_dist_br.geojson')
     if os.path.exists(path):
@@ -290,10 +412,39 @@ def main():
         G['pj'].append(k); G['yr'].append(yr if 1950 <= yr <= 2030 else 0)
     G.update(cl_l=cls.items, pj_l=[pinfo[i] for i in range(len(prj.items))])
 
+    # ---- country-wide maps in their own files (the page loads them only when the layer is turned on)
+    extra = {}
+    path = p('geosgb', 'geologia', 'litoestratigrafia_2_5m.geojson')
+    if os.path.exists(path):
+        cat, items = Index(), []
+        for f in stream_features(path):
+            q = f['properties']
+            g = rings(f.get('geometry'), 0.007, holes=True, nd=3, min_part=0.02)
+            if g:
+                items.append(dict(t=q.get('NOME') or '', s=q.get('SIGLA') or '', c=cat(q.get('ERA_MAX') or 'Indefinida'),
+                                  e0=q.get('ERA_MIN') or '', i0=q.get('IDADE_MIN'), i1=q.get('IDADE_MAX'),
+                                  li=(q.get('LITOTIPOS') or '')[:140], hi=q.get('HIERARQUIA') or '',
+                                  am=q.get('AMBIENTE_TECTONICO') or '', g=g))
+        extra['sgb_geologia'] = dict(cat_l=cat.items, items=items)
+    path = p('geosgb', 'hidrogeologia', 'dominios_hidrogeologicos.geojson')
+    if os.path.exists(path):
+        cat, items = Index(), []
+        for f in stream_features(path):
+            q = f['properties']
+            g = rings(f.get('geometry'), 0.012, holes=True, nd=3, min_part=0.05)
+            if g:
+                items.append(dict(t=q.get('nome_unida') or '', s=q.get('sigla_unid') or '', c=cat(q.get('dom') or 'Indefinido'),
+                                  sd=q.get('subdom') or '', po=q.get('potenc') or '', g=g))
+        extra['sgb_hidro'] = dict(cat_l=cat.items, items=items)
+
     n = {k: (len(v['x']) if isinstance(v, dict) else len(v)) for k, v in L.items()}
     n['geoq'] = len(G['x'])
+    if 'sgb_geologia' in extra:
+        n['geol'] = len(extra['sgb_geologia']['items'])
+    if 'sgb_hidro' in extra:
+        n['hidro'] = len(extra['sgb_hidro']['items'])
     sgb = dict(gerado=datetime.date.today().isoformat(), comm=comm.items, docs=docs, n=n, camadas=L)
-    for name, obj in (('sgb', sgb), ('sgb_geoquimica', G)):
+    for name, obj in [('sgb', sgb), ('sgb_geoquimica', G)] + list(extra.items()):
         with open(os.path.join(OUT, name + '.json'), 'w', encoding='utf-8') as fh:
             json.dump(obj, fh, ensure_ascii=False, separators=(',', ':'))
     print(json.dumps(dict(n=n, docs_rigeo=len(docs), commodities=len(comm.items)), ensure_ascii=False))

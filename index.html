@@ -42,6 +42,8 @@
         <div class="layer-list" id="sgbPontos"></div>
         <span class="control-label sub-label">Áreas (contorno por cima do mapa)</span>
         <div class="layer-list" id="sgbAreas"></div>
+        <span class="control-label sub-label">Mapas de fundo (todo o país, cor por categoria)</span>
+        <div class="layer-list" id="sgbFundo"></div>
         <p class="sub-note">Pontos SGB entram no heatmap pelas cores <b>Tipos de dado</b> e <b>Registros</b>. Clique numa área para ver todos os levantamentos que cobrem o local.</p>
       </div>
 
@@ -108,7 +110,9 @@
 
       <div class="control-group" id="sgbFiltros" hidden>
         <span class="control-label">SGB · tipo de amostra geoquímica <a class="reset-link" data-reset="geoqcl">todas</a></span>
-        <div class="chips" id="chipsGeoq"></div>
+        <div class="chips" id="chipsGeoq"><span class="sub-note">ligue “Amostras geoquímicas” para carregar</span></div>
+        <span class="control-label">SGB · escala da folha geológica <a class="reset-link" data-reset="folesc">todas</a></span>
+        <div class="chips" id="chipsFolhas"></div>
         <span class="control-label">SGB · importância da ocorrência <a class="reset-link" data-reset="ocim">todas</a></span>
         <div class="chips" id="chipsOcorr"></div>
       </div>
@@ -182,7 +186,7 @@
         Fonte: relatórios NI 43-101 (SEDAR+) de projetos no Brasil, lidos integralmente por modelo de linguagem; coordenadas convertidas para SIRGAS 2000.
         Processos: SIGMINE/ANM (só ativos). Municípios: IBGE 2024. Um projeto pode ter centenas de furos — use "Pontos (diluído)" ou "Relatórios" para não deixar projetos muito sondados dominarem o mapa.
         Detalhes em <span class="mono">sedar_ni43101/geo_brasil/README.md</span>.<br>
-        Dados públicos: SGB/CPRM via <span class="mono">scrapers_sgb</span> — GeoSGB (ocorrências minerais, geoquímica, geocronologia, gravimetria, magnetotelúrico, aerolevantamentos), P3MGeo (recursos minerais PDAC 2024, distritos auríferos), PDAC (folhas 1:50.000) e RIGeo (relatórios). <span id="sgbGerado"></span>
+        Dados públicos: SGB/CPRM via <span class="mono">scrapers_sgb</span> — GeoSGB (ocorrências minerais, geoquímica, geocronologia, gravimetria, magnetotelúrico, aerolevantamentos), P3MGeo (recursos minerais PDAC 2024, distritos auríferos), PDAC (folhas geológicas 1:50.000 a 1:1.000.000 — fora a 1:50.000, o retângulo vem do código da folha), hidrogeologia (SIAGAS, RIMAS, fontes hidrominerais, domínios hidrogeológicos), Geologia do Brasil 1:2.500.000 e RIGeo (relatórios). <span id="sgbGerado"></span>
       </footer>
     </main>
   </div>
