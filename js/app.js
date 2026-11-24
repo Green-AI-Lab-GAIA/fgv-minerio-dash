@@ -64,7 +64,7 @@
     tipos: new Set(), precisao: new Set([0, 1]), ufconf: false, info: new Set(), comm: new Set(),
     anoMin: 0, anoMax: 9999, soNovos: false, busca: '', sel: null,
     sgb: Object.fromEntries(SGB_ALL.map(d => [d.k, false])), geoqCl: new Set(), ocIm: new Set(), folEsc: new Set(),
-    tesPr: new Set([0, 1]),                                  // thesis location precision: município, região (estado off)
+    tesPr: new Set([0, 1, 3]),                               // thesis location precision: município, região, resumo (estado off)
     vmin: null, vmax: null,                                  // show only areas whose value is within [vmin, vmax]
     scale: {hex: {lo: null, hi: null}, mun: {lo: null, hi: null}},  // manual colour-scale ends (null = data extremes)
   };
@@ -161,9 +161,9 @@
   function buildTesChips() {
     const o = SGB.camadas.teses, n = o.p_l.map(() => new Set());
     o.p.forEach((p, i) => n[p].add(o.d[i]));
-    const nome = {municipio: 'município', regiao: 'distrito/região mineral', estado: 'só o estado'};
+    const nome = {municipio: 'município', regiao: 'distrito/região mineral', resumo: 'citado só no resumo', estado: 'só o estado'};
     $('chipsTesPr').innerHTML = '';
-    o.p_l.forEach((t, i) => chip($('chipsTesPr'), nome[t] || t, S.tesPr.has(i), () => toggle(S.tesPr, i))
+    ['municipio', 'regiao', 'resumo', 'estado'].map(t => o.p_l.indexOf(t)).filter(i => i >= 0).forEach(i => chip($('chipsTesPr'), nome[o.p_l[i]], S.tesPr.has(i), () => toggle(S.tesPr, i))
       .insertAdjacentHTML('beforeend', ` <span class="n">${fmt(n[i].size)}</span>`));
   }
   const sgbOn = () => SGB_PT.some(d => S.sgb[d.k]);
@@ -294,7 +294,7 @@
       if (k === 'geoqcl' && SGB?.camadas.geoq) { S.geoqCl = new Set(SGB.camadas.geoq.cl_l.map((_, i) => i)); setChips('chipsGeoq', true); }
       if (k === 'folesc' && SGB?.camadas.folhas) { S.folEsc = new Set(SGB.camadas.folhas.map(a => a.esc)); setChips('chipsFolhas', true); }
       if (k === 'ocim' && SGB?.camadas.ocorr) { S.ocIm = new Set(SGB.camadas.ocorr.im_l.map((_, i) => i)); setChips('chipsOcorr', true); }
-      if (k === 'tespr') { S.tesPr = new Set([0, 1]); if (SGB?.camadas.teses) buildTesChips(); }
+      if (k === 'tespr') { S.tesPr = new Set([0, 1, 3]); if (SGB?.camadas.teses) buildTesChips(); }
       update();
     });
     $('resetAll').onclick = () => {
@@ -809,7 +809,7 @@
     if (k === 'teses') { const T = o.T, t = o.d[i]; return `<b>${esc(T.t[t])}</b><br>${o.tp_l[T.tp[t]]} · ${esc(T.a[t])} · ${esc(T.ins[t])}<br><span class="muted">BDTD · local: ${esc(o.lg_l[o.lg[i]])} (${tesPrec(o, i)})</span>`; }
     return '';
   }
-  const tesPrec = (o, i) => ({municipio: 'município', regiao: 'distrito/região', estado: 'só o estado'})[o.p_l[o.p[i]]];
+  const tesPrec = (o, i) => ({municipio: 'município', regiao: 'distrito/região', resumo: 'citado só no resumo', estado: 'só o estado'})[o.p_l[o.p[i]]];
   const fmtMa = v => v >= 100 ? fmt(Math.round(v)) : d3.format('.3~r')(v);
   function geolIdade(a) {
     const era = SGB.cat.geol[a.c], eras = a.e0 && a.e0 !== era ? `${era} a ${a.e0}` : era;

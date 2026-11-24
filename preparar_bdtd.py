@@ -9,6 +9,8 @@ Theses carry no coordinates, so each one is placed by the place names in its tit
   regiao     a mining/geological district from REGIOES below (Quadrilátero Ferrífero, Carajás, Tapajós...), with an
              approximate centre. Only districts up to ~200 km across: cratons, big basins and fold belts are left out
              because one point would misplace them.
+  resumo     nothing in title/subjects/coverage: towns and districts named in the abstract (same rules, up to 3),
+             after removing the thesis note, advisor and university names so a thesis does not land on its campus.
   estado     only when nothing finer was found: the state named in the text (centre of its municipalities).
 A thesis gets up to 4 points (municipalities and districts); state points are a fallback, never mixed with the others.
 The same work deposited twice (same title and first author) is kept once.
@@ -61,7 +63,8 @@ REGIOES = [
     (['Planalto de Poços de Caldas', 'Maciço de Poços de Caldas'], -46.55, -21.85, 'MG'),
     (['Província Aurífera de Alta Floresta', 'Província Aurífera Juruena-Teles Pires'], -56.0, -9.9, 'MT'),
     (['Lavras do Sul'], -53.9, -30.8, 'RS'),
-    (['Serra do Navio'], -52.0, 0.9, 'AP'),
+    (['Serra do Navio', 'ICOMI'], -52.0, 0.9, 'AP'),
+    (['Província Graciosa'], -49.0, -25.8, 'PR'),
 ]
 
 # words that turn the next place name into a rock unit / structure name
@@ -69,7 +72,9 @@ PREFIXOS = {'formacao', 'formacoes', 'grupo', 'supergrupo', 'subgrupo', 'suite',
             'faixa', 'orogeno', 'cinturao', 'craton', 'macico', 'granito', 'granitoide', 'granitoides', 'pluton',
             'batolito', 'sequencia', 'membro', 'arco', 'bloco', 'dominio', 'terreno', 'provincia', 'lineamento',
             'cisalhamento', 'aquifero', 'sistema', 'rio', 'riacho', 'serra', 'lagoa', 'vale', 'sinclinal', 'anticlinal',
-            'greenstone', 'belt', 'unidade', 'corpo', 'intrusao', 'enxame', 'diques', 'dique', 'kimberlito'}
+            'greenstone', 'belt', 'unidade', 'corpo', 'intrusao', 'enxame', 'diques', 'dique', 'kimberlito',
+            'grupos', 'suites', 'granitico', 'granitica', 'microplaca', 'microplacas', 'companhia', 'fazenda',
+            'barragem', 'falha', 'alto', 'campo', 'estreito', 'ilha', 'ilhas', 'pico', 'parque', 'reserva', 'floresta'}
 # town names that are also common words in this literature: accepted only with their state in the text
 COMUNS = {'granito', 'turmalina', 'ferros', 'cristais', 'areia', 'prata', 'ouro', 'diamante', 'esmeraldas',
           'salinas', 'barreiras', 'serra', 'palmas', 'vitoria', 'uniao', 'esperanca', 'paraiso', 'planalto', 'pedra',
@@ -79,7 +84,8 @@ COMUNS = {'granito', 'turmalina', 'ferros', 'cristais', 'areia', 'prata', 'ouro'
           'canarana', 'sertao', 'estrela', 'triunfo', 'cachoeira', 'pocone', 'goias', 'para', 'parana', 'rio grande',
           'espirito santo', 'sao paulo', 'rio de janeiro', 'amazonas', 'tocantins', 'acre', 'sergipe', 'roraima',
           'pacaraima', 'ipiranga', 'colorado', 'guarani', 'pantanal', 'bocaiuva', 'carandai', 'ladario', 'mirante',
-          'mangaratiba', 'arraial', 'lima', 'oliveira', 'moeda', 'jardim', 'cristalina', 'castelo', 'medicina'}
+          'mangaratiba', 'arraial', 'lima', 'oliveira', 'moeda', 'jardim', 'cristalina', 'castelo', 'medicina',
+          'estreito', 'brasileira', 'fundao', 'alegre', 'socorro', 'correntes', 'riachao', 'cajueiro', 'macacos'}
 CONECT = {'de', 'do', 'da', 'dos', 'das', 'e', "d'"}
 
 
@@ -167,9 +173,10 @@ class Locator:
                 found.append(m.group(1))
         return found, rest
 
-    def locate(self, rec):
-        text = ' ; '.join(x for x in (rec.get('titulo'), rec.get('assuntos'), rec.get('cobertura')) if x)
+    def _fine(self, text, ufs_extra=()):
+        """Municipalities and districts named in text, plus the states it names."""
         ufs, rest = self.estados(text)
+        ok_ufs = ufs + [u for u in ufs_extra if u not in ufs]
         places = []
         for r, nome, x, y, uf in self.regioes:
             if r.search(rest):
@@ -185,17 +192,39 @@ class Locator:
             if before and before[-1] in PREFIXOS:
                 continue
             cands = self.by_name[key]
-            if ufs:
-                cands = [c for c in cands if c[1] in ufs]
+            if ok_ufs:
+                cands = [c for c in cands if c[1] in ok_ufs]
             elif len(cands) > 1 or key in COMUNS or upper:
                 continue
             for nm, uf, x, y in cands[:1]:
                 if not any(p[1] == nm and p[2] == uf for p in places):
                     places.append(('municipio', nm, uf, x, y))
-        places = places[:4]
-        if not places:
-            places = [('estado', UF_NOME[uf], uf) + self.estado_xy[uf] for uf in ufs[:2] if uf in self.estado_xy]
-        return places
+        return places, ufs
+
+    def locate(self, rec):
+        text = ' ; '.join(x for x in (rec.get('titulo'), rec.get('assuntos'), rec.get('cobertura')) if x)
+        places, ufs = self._fine(text)
+        if places:
+            return places[:4]
+        # nothing in title/subjects: the abstract, with the states of the title also accepted for its towns
+        res = limpa_resumo(rec.get('resumo') or '')
+        rplaces, rufs = self._fine(res, ufs) if res else ([], [])
+        if rplaces:
+            return [('resumo',) + p[1:] for p in rplaces[:3]]
+        return [('estado', UF_NOME[uf], uf) + self.estado_xy[uf] for uf in (ufs or rufs)[:2] if uf in self.estado_xy]
+
+
+# boilerplate in the BDTD "description" field: thesis notes, advisors, university names and cities
+RESUMO_LIXO = re.compile(
+    r"(Tese|Disserta[cç][aã]o|Trabalho de conclus[aã]o|Monografia)\s*\((mestrado|doutorado|graduação)[^)]*\)[^.]*?(\b(19|20)\d\d\b\.?|$)"
+    r"|Orienta(dor|dora|ção)[^:]*:[^.;\n]*"
+    r"|(Universidade|Faculdade|Instituto|Centro Federal|Escola de Minas|Pontif[ií]cia)[^.,;()]*"
+    r"|Programa de P[oó]s[- ]Gradua[cç][aã]o[^.,;()]*", re.I)
+
+
+def limpa_resumo(s):
+    s = RESUMO_LIXO.sub(' ', s)
+    return s if len(s.strip()) > 80 else ''
 
 
 def main():
@@ -226,7 +255,7 @@ def main():
             print(('  ' if pl else '--'), r['titulo'][:110], '\n      ', [(p[0], p[1], p[2]) for p in pl] or r['assuntos'][:110])
         return
 
-    PREC = ['municipio', 'regiao', 'estado']
+    PREC = ['municipio', 'regiao', 'estado', 'resumo']
     TIPO = ['dissertacao', 'tese']
     o = dict(x=[], y=[], d=[], p=[], lg=[])              # points: lon, lat, thesis index, precision, place name
     T = dict(t=[], a=[], ins=[], tp=[], tm=[], id=[], pdf=[], pr=[], h=[])  # theses
