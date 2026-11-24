@@ -38,3 +38,19 @@ The dashboard also shows the public data collected by `scrapers_sgb` (GeoSGB, P3
   SGB names, places and projects; sample type (geochemistry) and occurrence importance have their own chips.
 - Details: geochemical samples, projects and 1:50k sheets link to their report in RIGeo (metadata joined from
   `rigeo/rigeo_all.jsonl`).
+
+## Teses e dissertações (BDTD/IBICT)
+
+Theses and dissertations on geology and mining from the BDTD (`python -m scrapers_sgb bdtd harvest`, output in
+`<repo>/data/bdtd/`), shown as the layer "Teses e dissertações" (loads `data/bdtd.json` when turned on).
+
+- Refresh: run the harvest, then `./run.sh --preparar-bdtd` (standard library only).
+- Theses have no coordinates. `preparar_bdtd.py` places each one at the IBGE municipalities and mining districts
+  (Quadrilátero Ferrífero, Carajás, Tapajós…) named in its title, subjects or coverage, up to 4 places; with none,
+  at the centre of the state it names. A precision filter (município / distrito / só o estado) sits under the layer;
+  state-only points are off by default so they don't pile up at state centres.
+- Town names are only accepted when the state matches (or the name exists in one state only), and are skipped after
+  words such as Formação, Grupo, Bacia, Faixa ("Grupo Macaúbas" is a rock unit, not the town).
+- Duplicate deposits of the same work (same title and first author) are merged.
+- Free-text search and the commodity filter match the title and subjects. Clicking lists the theses with links to
+  the BDTD record and the PDF.

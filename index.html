@@ -47,6 +47,14 @@
         <p class="sub-note">Pontos SGB entram no heatmap pelas cores <b>Tipos de dado</b> e <b>Registros</b>. Clique numa área para ver todos os levantamentos que cobrem o local.</p>
       </div>
 
+      <div class="control-group" id="tesesGroup" hidden>
+        <span class="control-label">Pesquisa acadêmica · teses e dissertações (BDTD/IBICT)</span>
+        <div class="layer-list" id="sgbTeses"></div>
+        <span class="control-label sub-label">Precisão da localização <a class="reset-link" data-reset="tespr">padrão</a></span>
+        <div class="chips" id="chipsTesPr"><span class="sub-note">ligue “Teses e dissertações” para carregar</span></div>
+        <p class="sub-note">As teses não têm coordenada: cada uma vai para o município ou distrito mineral citado no título, nos assuntos ou na cobertura (até 4 lugares). Sem isso, vai para o centro do estado citado — desligado por padrão para não empilhar pontos. Busca e commodity filtram pelo título e assuntos.</p>
+      </div>
+
       <div class="control-group">
         <span class="control-label">Como desenhar pontos e processos</span>
         <div class="segmented" id="modoToggle">
@@ -139,7 +147,7 @@
         <div class="stat-tile"><div class="stat-label">Pontos SEDAR+</div><div class="stat-value" id="kPts">–</div><div class="stat-sub" id="kPtsSub"></div></div>
         <div class="stat-tile"><div class="stat-label">Processos ANM</div><div class="stat-value" id="kProc">–</div><div class="stat-sub">citados no SEDAR+, polígono SIGMINE</div></div>
         <div class="stat-tile"><div class="stat-label">Municípios</div><div class="stat-value" id="kMun">–</div><div class="stat-sub">citados como local no SEDAR+</div></div>
-        <div class="stat-tile"><div class="stat-label">Dados SGB</div><div class="stat-value" id="kSgb">–</div><div class="stat-sub" id="kSgbSub">camadas desligadas</div></div>
+        <div class="stat-tile"><div class="stat-label">Dados públicos</div><div class="stat-value" id="kSgb">–</div><div class="stat-sub" id="kSgbSub">camadas desligadas</div></div>
       </div>
 
       <section class="map-panel">
@@ -187,7 +195,7 @@
         Fonte: relatórios NI 43-101 (SEDAR+) de projetos no Brasil, lidos integralmente por modelo de linguagem; coordenadas convertidas para SIRGAS 2000.
         Processos: SIGMINE/ANM (só ativos). Municípios: IBGE 2024. Um projeto pode ter centenas de furos — use "SEDAR+ diluído" ou "Relatórios SEDAR+" para não deixar projetos muito sondados dominarem o mapa.
         Detalhes em <span class="mono">sedar_ni43101/geo_brasil/README.md</span>.<br>
-        Dados públicos: SGB/CPRM via <span class="mono">scrapers_sgb</span> — GeoSGB (ocorrências minerais, geoquímica, geocronologia, gravimetria, magnetotelúrico, aerolevantamentos), P3MGeo (recursos minerais PDAC 2024, distritos auríferos), PDAC (folhas geológicas 1:50.000 a 1:1.000.000 — fora a 1:50.000, o retângulo vem do código da folha), hidrogeologia (SIAGAS, RIMAS, fontes hidrominerais, domínios hidrogeológicos), Geologia do Brasil 1:2.500.000 e RIGeo (relatórios). <span id="sgbGerado"></span>
+        Dados públicos: SGB/CPRM via <span class="mono">scrapers_sgb</span> — GeoSGB (ocorrências minerais, geoquímica, geocronologia, gravimetria, magnetotelúrico, aerolevantamentos), P3MGeo (recursos minerais PDAC 2024, distritos auríferos), PDAC (folhas geológicas 1:50.000 a 1:1.000.000 — fora a 1:50.000, o retângulo vem do código da folha), hidrogeologia (SIAGAS, RIMAS, fontes hidrominerais, domínios hidrogeológicos), Geologia do Brasil 1:2.500.000 e RIGeo (relatórios). <span id="sgbGerado"></span> Teses e dissertações: BDTD/IBICT (busca por termos de geologia e mineração no título e nos assuntos), localizadas pelos nomes de lugar.
       </footer>
     </main>
   </div>

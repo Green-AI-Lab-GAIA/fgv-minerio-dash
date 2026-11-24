@@ -5,6 +5,7 @@
 #        ./run.sh --preparar [port]  regenerate data/*.json from sedar_ni43101/geo_brasil/geo_brasil.gpkg first
 #        ./run.sh --preparar-sgb [port]  regenerate data/sgb*.json from the scrapers_sgb output first
 #                                        (default <repo>/data; override with SGB_DATA=/caminho/data)
+#        ./run.sh --preparar-bdtd [port] regenerate data/bdtd.json (theses placed on the map) from the same directory
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "$DIR")"
@@ -16,6 +17,10 @@ fi
 if [[ "${1:-}" == "--preparar-sgb" ]]; then
   shift
   python3 "$DIR/preparar_sgb.py"
+fi
+if [[ "${1:-}" == "--preparar-bdtd" ]]; then
+  shift
+  python3 "$DIR/preparar_bdtd.py"
 fi
 PORT="${1:-8770}"
 URL="http://localhost:${PORT}/$(basename "$DIR")/"

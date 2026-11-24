@@ -35,6 +35,8 @@
     {k: 'mt', nome: 'Magnetotelúrico', sub: 'estações MT (GeoSGB)', cor: '#1F6B5C', curto: 'estações MT'},
     {k: 'pocos', nome: 'Poços (SIAGAS / RIMAS)', sub: 'poços tubulares, de monitoramento, nascentes (GeoSGB)', cor: '#1A9BB0', curto: 'poços'},
     {k: 'fontes', nome: 'Fontes hidrominerais', sub: 'municípios com fontes cadastradas (GeoSGB)', cor: '#5B8C3A', curto: 'fontes hidromin.'},
+    // theses have no coordinates: preparar_bdtd.py places each one at the towns/districts named in its title or subjects
+    {k: 'teses', nome: 'Teses e dissertações', sub: 'geologia e mineração, no lugar citado no título · carrega ao ligar', cor: '#8C4A6B', curto: 'teses', lazy: 'bdtd', src: 'BDTD', grp: 'teses'},
   ];
   const SGB_AREA = [
     {k: 'aero', nome: 'Aerolevantamentos', sub: 'magnetometria, gamaespectrometria… (GeoSGB)', cor: '#2F6FA8'},
@@ -62,6 +64,7 @@
     tipos: new Set(), precisao: new Set([0, 1]), ufconf: false, info: new Set(), comm: new Set(),
     anoMin: 0, anoMax: 9999, soNovos: false, busca: '', sel: null,
     sgb: Object.fromEntries(SGB_ALL.map(d => [d.k, false])), geoqCl: new Set(), ocIm: new Set(), folEsc: new Set(),
+    tesPr: new Set([0, 1]),                                  // thesis location precision: município, região (estado off)
     vmin: null, vmax: null,                                  // show only areas whose value is within [vmin, vmax]
     scale: {hex: {lo: null, hi: null}, mun: {lo: null, hi: null}},  // manual colour-scale ends (null = data extremes)
   };
@@ -81,7 +84,8 @@
       DOCS.forEach(d => { d.y = +d.d.slice(0, 4) || 0; d.h = `${d.t} ${d.e} ${d.pr}`.toLowerCase(); });
       S.tipos = new Set(META.tipos.map((_, i) => i));
       S.anoMin = META.ano_min; S.anoMax = META.ano_max;
-      $('metaFonte').textContent = `fonte: SEDAR+ · ${META.n_docs} relatórios · gerado ${META.gerado}` + (SGB ? ` · SGB/CPRM ${SGB.gerado}` : '');
+      $('metaFonte').textContent = `fonte: SEDAR+ · ${META.n_docs} relatórios · gerado ${META.gerado}` + (SGB ? ` · SGB/CPRM ${SGB.gerado}` : '')
+        + (SGB?.bdtd ? ` · BDTD ${SGB.bdtd.gerado}` : '');
       buildControls();
       buildMap();
       $('loading').remove();
@@ -109,6 +113,7 @@
     if (k === 'geocron') hay(i => `${o.am[i]} ${o.ro[i]} ${o.me[i]}`);
     if (k === 'pocos') hay(i => `${o.nm[i]} ${o.aq[i]} ${o.mun[i]} ${o.uf[i]} ${o.nat_l[o.nat[i]]} ${o.uso[i]} ${o.src_l[o.src[i]]}`);
     if (k === 'fontes') hay(i => `${o.nm[i]} ${o.uf[i]} fonte hidromineral`);
+    if (k === 'teses') hay(i => `${o.T.h[o.d[i]]} ${o.lg_l[o.lg[i]]}`);
     if (k === 'geoq') o.pj_l.forEach(p => { p.h = `${p.t} ${docT(p.doc)}`.toLowerCase(); });
     if (k === 'mt') o.pj_h = o.pj_l.map(t => t.toLowerCase());
     if (o.c) o.cn = o.c.map(cs => cs.map(c => comm[c]));
@@ -141,6 +146,7 @@
       if (d.cov) { SGB.camadas[d.k] = data.items; SGB.cat[d.k] = data.cat_l; prepAreas(d.k); }
       else { SGB.camadas[d.k] = data; prepPoints(d.k); }
       if (d.k === 'geoq') buildGeoqChips();
+      if (d.k === 'teses') buildTesChips();
     }).catch(err => { delete lazyLoads[d.k]; throw err; });
     return lazyLoads[d.k];
   }
@@ -152,6 +158,14 @@
     o.cl_l.map((t, i) => [t, i]).sort((a, b) => n[b[1]] - n[a[1]])
       .forEach(([t, i]) => chip($('chipsGeoq'), t, true, () => toggle(S.geoqCl, i)).insertAdjacentHTML('beforeend', ` <span class="n">${fmt(n[i])}</span>`));
   }
+  function buildTesChips() {
+    const o = SGB.camadas.teses, n = o.p_l.map(() => new Set());
+    o.p.forEach((p, i) => n[p].add(o.d[i]));
+    const nome = {municipio: 'município', regiao: 'distrito/região mineral', estado: 'só o estado'};
+    $('chipsTesPr').innerHTML = '';
+    o.p_l.forEach((t, i) => chip($('chipsTesPr'), nome[t] || t, S.tesPr.has(i), () => toggle(S.tesPr, i))
+      .insertAdjacentHTML('beforeend', ` <span class="n">${fmt(n[i].size)}</span>`));
+  }
   const sgbOn = () => SGB_PT.some(d => S.sgb[d.k]);
   const sgbAreasOn = () => SGB_POLY.some(d => S.sgb[d.k]);
   const sgbMetric = () => S.metrica === 'tipos' || S.metrica === 'registros';
@@ -161,13 +175,14 @@
     const L = SGB.camadas;
     $('sgbGroup').hidden = false; $('sgbFiltros').hidden = false; $('commNota').hidden = false;
     $('sgbGerado').textContent = `Bases SGB exportadas em ${SGB.gerado}.`;
-    const nOf = d => SGB.n?.[d.k] ?? (L[d.k] ? (L[d.k].n ?? L[d.k].length) : 0);
+    const nOf = d => d.k === 'teses' && SGB.bdtd ? SGB.bdtd.teses : SGB.n?.[d.k] ?? (L[d.k] ? (L[d.k].n ?? L[d.k].length) : 0);
     const item = (box, d, area) => {
       const lab = document.createElement('label');
       lab.className = 'layer-item';
-      const sub = d.k === 'pocos' && L.pocos ? `${d.sub} · SIAGAS só ${L.pocos.siagas_ufs.join(', ') || '—'}; RIMAS no país` : d.sub;
+      const sub = d.k === 'pocos' && L.pocos ? `${d.sub} · SIAGAS só ${L.pocos.siagas_ufs.join(', ') || '—'}; RIMAS no país`
+        : d.k === 'teses' && SGB.bdtd ? `${d.sub} · ${fmt(SGB.bdtd.teses)} das ${fmt(SGB.bdtd.total)} coletadas citam um lugar` : d.sub;
       lab.innerHTML = `<input type="checkbox" data-sgb="${d.k}"><span class="sw${area ? ' area' : ''}" style="background:${d.cor};border-color:${d.cor}"></span>
-        <span><b><span class="src sgb">SGB</span>${esc(d.nome)}<span class="n">${fmt(nOf(d))}</span></b><small>${esc(sub)}</small></span>`;
+        <span><b><span class="src ${d.src ? d.src.toLowerCase() : 'sgb'}">${d.src || 'SGB'}</span>${esc(d.nome)}<span class="n">${fmt(nOf(d))}</span></b><small>${esc(sub)}</small></span>`;
       const inp = lab.querySelector('input'), small = lab.querySelector('small');
       inp.onchange = async () => {
         if (inp.checked && d.lazy && !L[d.k]) {
@@ -179,14 +194,16 @@
         const wasOn = sgbOn();
         S.sgb[d.k] = inp.checked;
         // the SEDAR metrics ignore SGB points: switch the colour to "Tipos de dado" when the first SGB point layer goes on
-        if (!area && !wasOn && sgbOn() && !sgbMetric()) setMetric('tipos');
+        // (theses alone: "Registros", since one layer makes every cell 1 in "Tipos de dado")
+        if (!area && !wasOn && sgbOn() && !sgbMetric()) setMetric(d.k === 'teses' ? 'registros' : 'tipos');
         $('sgbNone').hidden = !sgbOn() && !sgbAreasOn();
         update();
       };
       box.appendChild(lab);
     };
     const has = d => L[d.k] || (d.lazy && nOf(d));
-    SGB_PT.forEach(d => has(d) && item($('sgbPontos'), d, false));
+    SGB_PT.forEach(d => has(d) && item(d.grp === 'teses' ? $('sgbTeses') : $('sgbPontos'), d, false));
+    $('tesesGroup').hidden = !has(SGB_DEF.teses);
     SGB_AREA.forEach(d => has(d) && item($('sgbAreas'), d, true));
     SGB_COV.forEach(d => has(d) && item($('sgbFundo'), d, true));
     $('sgbNone').onclick = () => {
@@ -277,6 +294,7 @@
       if (k === 'geoqcl' && SGB?.camadas.geoq) { S.geoqCl = new Set(SGB.camadas.geoq.cl_l.map((_, i) => i)); setChips('chipsGeoq', true); }
       if (k === 'folesc' && SGB?.camadas.folhas) { S.folEsc = new Set(SGB.camadas.folhas.map(a => a.esc)); setChips('chipsFolhas', true); }
       if (k === 'ocim' && SGB?.camadas.ocorr) { S.ocIm = new Set(SGB.camadas.ocorr.im_l.map((_, i) => i)); setChips('chipsOcorr', true); }
+      if (k === 'tespr') { S.tesPr = new Set([0, 1]); if (SGB?.camadas.teses) buildTesChips(); }
       update();
     });
     $('resetAll').onclick = () => {
@@ -445,6 +463,9 @@
         for (let i = 0; i < o.n; i++) if (!q || o.h[i].includes(q)) idx.push(i);
       } else if (d.k === 'mt') {
         for (let i = 0; i < o.n; i++) if (!q || o.pj_h[o.pj[i]].includes(q)) idx.push(i);
+      } else if (d.k === 'teses') {
+        // the commodity filter matches the commodity name in the title/subjects
+        for (let i = 0; i < o.n; i++) if (S.tesPr.has(o.p[i]) && (!q || o.h[i].includes(q)) && (!comm || [...comm].some(c => o.h[i].includes(c)))) idx.push(i);
       } else if (o.h) {
         for (let i = 0; i < o.n; i++) if (!q || o.h[i].includes(q)) idx.push(i);
       } else if (!q) {
@@ -753,7 +774,8 @@
     if (SGB) {
       const nPts = Object.values(F.sgb).reduce((s, a) => s + a.length, 0), nOn = SGB_ALL.filter(d => S.sgb[d.k]).length;
       $('kSgb').textContent = nOn ? fmt(nPts + F.areas.length) : '—';
-      $('kSgbSub').textContent = nOn ? `${fmt(nPts)} pontos · ${fmt(F.areas.length)} áreas · ${nOn} camadas` : 'camadas desligadas';
+      const nTes = F.sgb.teses ? new Set(F.sgb.teses.map(i => SGB.camadas.teses.d[i])).size : 0;
+      $('kSgbSub').textContent = nOn ? `${fmt(nPts)} pontos · ${fmt(F.areas.length)} áreas · ${nOn} camadas${nTes ? ` · ${fmt(nTes)} teses` : ''}` : 'camadas desligadas';
     } else { $('kSgb').textContent = '—'; $('kSgbSub').textContent = 'rode preparar_sgb.py'; }
   }
 
@@ -784,8 +806,10 @@
     if (k === 'mt') return `<b>Estação ${esc(o.s[i])}</b> — ${esc(o.pj_l[o.pj[i]])}<br>${esc(o.d[i])} · ${esc(o.ins[i])}<br>${where}`;
     if (k === 'pocos') return `<b>${esc(o.nm[i] || o.pid[i])}</b> — ${esc(o.nat_l[o.nat[i]])}<br>${o.pr[i] != null ? `${o.pr[i]} m · ` : ''}${esc(o.aq[i] || 'aquífero não informado')} · ${esc(o.mun[i])}/${o.uf[i]}<br>${where} · ${o.src_l[o.src[i]]}`;
     if (k === 'fontes') return `<b>${esc(o.nm[i])}/${o.uf[i]}</b><br>${fmt(o.q[i])} fontes hidrominerais<br>${where}`;
+    if (k === 'teses') { const T = o.T, t = o.d[i]; return `<b>${esc(T.t[t])}</b><br>${o.tp_l[T.tp[t]]} · ${esc(T.a[t])} · ${esc(T.ins[t])}<br><span class="muted">BDTD · local: ${esc(o.lg_l[o.lg[i]])} (${tesPrec(o, i)})</span>`; }
     return '';
   }
+  const tesPrec = (o, i) => ({municipio: 'município', regiao: 'distrito/região', estado: 'só o estado'})[o.p_l[o.p[i]]];
   const fmtMa = v => v >= 100 ? fmt(Math.round(v)) : d3.format('.3~r')(v);
   function geolIdade(a) {
     const era = SGB.cat.geol[a.c], eras = a.e0 && a.e0 !== era ? `${era} a ${a.e0}` : era;
@@ -857,7 +881,8 @@
   function selectSgbPoint(hit) {
     const d = SGB_DEF[hit.k];
     const [lon, lat] = [SGB.camadas[hit.k].x[hit.i], SGB.camadas[hit.k].y[hit.i]];
-    select({title: d.nome, sub: `${lon.toFixed(4)}, ${lat.toFixed(4)} · ponto do SGB/CPRM`, pts: [], procs: [], mun: [],
+    const sub = hit.k === 'teses' ? `${SGB.camadas.teses.lg_l[SGB.camadas.teses.lg[hit.i]]} · tese/dissertação da BDTD` : `${lon.toFixed(4)}, ${lat.toFixed(4)} · ponto do SGB/CPRM`;
+    select({title: d.nome, sub, pts: [], procs: [], mun: [],
       sgb: {[hit.k]: [hit.i]}, areas: areasAt(lon, lat), areaNote: 'áreas SGB que cobrem o ponto'});
   }
   function selectAreasAt(e, el) {
@@ -948,6 +973,15 @@
           + more(idx.length, MAXL) + '</ul>';
       } else if (d.k === 'fontes') {
         body = '<ul>' + idx.map(i => `<li><b>${esc(o.nm[i])}/${o.uf[i]}</b> — ${fmt(o.q[i])} fontes hidrominerais cadastradas</li>`).join('') + '</ul>';
+      } else if (d.k === 'teses') {
+        // one line per thesis (a thesis can have several points in the cell), newest first
+        const T = o.T, lugares = new Map();
+        idx.forEach(i => { const t = o.d[i]; if (!lugares.has(t)) lugares.set(t, new Set()); lugares.get(t).add(o.lg_l[o.lg[i]]); });
+        const ts = [...lugares.keys()].sort((a, b) => (T.a[b] || '').localeCompare(T.a[a] || ''));
+        const lnk = t => `<a href="https://bdtd.ibict.br/vufind/Record/${encodeURIComponent(T.id[t])}" target="_blank" rel="noopener">BDTD</a>${T.pdf[t] ? ` · <a href="${esc(T.pdf[t])}" target="_blank" rel="noopener">PDF</a>` : ''}`;
+        body = `<p class="sub-note">${fmt(ts.length)} trabalhos · ${fmt(ts.filter(t => T.tp[t] === 1).length)} teses de doutorado · ${fmt(ts.filter(t => T.tm[t]).length)} sobre recursos minerais e mineração</p><ul>`
+          + ts.slice(0, MAXL).map(t => `<li><b>${esc(T.t[t])}</b> <span class="muted">— ${o.tp_l[T.tp[t]]} · ${esc(T.a[t])} · ${esc(T.ins[t])} · ${esc([...lugares.get(t)].join(', '))}</span><br>${lnk(t)}</li>`).join('')
+          + more(ts.length, MAXL) + '</ul>';
       } else if (d.k === 'mt') {
         body = '<ul>' + countBy(idx, i => o.pj[i]).map(([pj, n]) => {
           const ds = idx.filter(i => o.pj[i] === pj).map(i => o.d[i]).filter(Boolean).sort();
@@ -970,7 +1004,7 @@
       const s = [...as].sort((x, y) => String(y.a.a || y.a.a1 || '').localeCompare(String(x.a.a || x.a.a1 || '')));
       parts.push(block(d, as.length, '<ul>' + s.slice(0, MAXL).map(li).join('') + more(s.length, MAXL) + '</ul>', open || as.length <= 5));
     }
-    box.innerHTML = parts.length ? `<div class="sgb-block"><h3>Dados públicos SGB/CPRM</h3>`
+    box.innerHTML = parts.length ? `<div class="sgb-block"><h3>Dados públicos ${sg.teses?.length ? (Object.keys(sg).length > 1 || sel.areas?.length ? 'SGB/CPRM e BDTD' : 'BDTD') : 'SGB/CPRM'}</h3>`
       + (sel.areaNote && sel.areas?.length ? `<p class="sub-note">Áreas: ${esc(sel.areaNote)}.</p>` : '') + parts.join('') + '</div>' : '';
   }
 })();

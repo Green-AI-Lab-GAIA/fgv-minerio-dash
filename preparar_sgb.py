@@ -444,6 +444,12 @@ def main():
     if 'sgb_hidro' in extra:
         n['hidro'] = len(extra['sgb_hidro']['items'])
     sgb = dict(gerado=datetime.date.today().isoformat(), comm=comm.items, docs=docs, n=n, camadas=L)
+    # keep the BDTD theses layer (written by preparar_bdtd.py) listed when this file is rebuilt
+    old = os.path.join(OUT, 'sgb.json')
+    if os.path.exists(os.path.join(OUT, 'bdtd.json')) and os.path.exists(old):
+        prev = json.load(open(old, encoding='utf-8'))
+        if 'bdtd' in prev:
+            sgb['bdtd'] = prev['bdtd']; n['teses'] = prev.get('n', {}).get('teses', 0)
     for name, obj in [('sgb', sgb), ('sgb_geoquimica', G)] + list(extra.items()):
         with open(os.path.join(OUT, name + '.json'), 'w', encoding='utf-8') as fh:
             json.dump(obj, fh, ensure_ascii=False, separators=(',', ':'))
