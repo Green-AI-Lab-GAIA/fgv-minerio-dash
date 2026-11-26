@@ -13,13 +13,18 @@ Theses carry no coordinates, so each one is placed by the place names in its tit
              after removing the thesis note, advisor and university names so a thesis does not land on its campus.
   estado     only when nothing finer was found: the state named in the text (centre of its municipalities).
 A thesis gets up to 4 points (municipalities and districts); state points are a fallback, never mixed with the others.
+  pdf        coordinates written in the thesis itself (study area, samples, drill holes), pulled from its full text by
+             `python -m scrapers_sgb bdtd coords` into bdtd/bdtd_coords.jsonl. When they agree (median point, half of
+             them within 50 km of it) the thesis gets that single point instead of the name-based ones, and theses
+             with no place name get onto the map this way. UTM needs its zone: from the text when it says it, otherwise
+             from the place found by name, and then only if the result lands within 150 km of that place.
 The same work deposited twice (same title and first author) is kept once.
 
 Reads <repo>/data/bdtd/bdtd_minerio.jsonl (override with --dados or SGB_DATA) and writes data/bdtd.json, loaded by
 the page when the layer is turned on; the layer size goes into data/sgb.json (n.teses) so the layer list can show it.
 Needs only the Python standard library. Run: ./run.sh --preparar-bdtd   (or python3 preparar_bdtd.py --dados DIR)
 """
-import argparse, collections, datetime, json, os, re, sys, unicodedata
+import argparse, collections, datetime, json, math, os, re, statistics, sys, unicodedata
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, 'data')
@@ -227,6 +232,61 @@ def limpa_resumo(s):
     return s if len(s.strip()) > 80 else ''
 
 
+def hav(lon1, lat1, lon2, lat2):
+    r = math.radians
+    h = math.sin(r(lat2 - lat1) / 2) ** 2 + math.cos(r(lat1)) * math.cos(r(lat2)) * math.sin(r(lon2 - lon1) / 2) ** 2
+    return 2 * 6371 * math.asin(math.sqrt(h))
+
+
+def utm_to_latlon(E, N, zone):
+    """Inverse transverse Mercator (WGS84/SIRGAS2000), southern hemisphere (same as scrapers_sgb.bdtd_coords)."""
+    k0, a, f = 0.9996, 6378137.0, 1 / 298.257223563
+    e2 = f * (2 - f); ep2 = e2 / (1 - e2)
+    x, y = E - 500000.0, N - 10000000.0
+    mu = y / k0 / (a * (1 - e2 / 4 - 3 * e2 ** 2 / 64 - 5 * e2 ** 3 / 256))
+    e1 = (1 - math.sqrt(1 - e2)) / (1 + math.sqrt(1 - e2))
+    p = (mu + (3 * e1 / 2 - 27 * e1 ** 3 / 32) * math.sin(2 * mu) + (21 * e1 ** 2 / 16 - 55 * e1 ** 4 / 32) * math.sin(4 * mu)
+         + (151 * e1 ** 3 / 96) * math.sin(6 * mu) + (1097 * e1 ** 4 / 512) * math.sin(8 * mu))
+    sn, cs, t = math.sin(p), math.cos(p), math.tan(p)
+    n1 = a / math.sqrt(1 - e2 * sn * sn); t1, c1 = t * t, ep2 * cs * cs
+    r1 = a * (1 - e2) / (1 - e2 * sn * sn) ** 1.5; d = x / (n1 * k0)
+    lat = p - (n1 * t / r1) * (d ** 2 / 2 - (5 + 3 * t1 + 10 * c1 - 4 * c1 ** 2 - 9 * ep2) * d ** 4 / 24
+                               + (61 + 90 * t1 + 298 * c1 + 45 * t1 ** 2 - 252 * ep2 - 3 * c1 ** 2) * d ** 6 / 720)
+    lon = (d - (1 + 2 * t1 + c1) * d ** 3 / 6 + (5 - 2 * c1 + 28 * t1 - 3 * c1 ** 2 + 8 * ep2 + 24 * t1 ** 2) * d ** 5 / 120) / cs
+    return math.degrees(lat), (zone - 1) * 6 - 180 + 3 + math.degrees(lon)
+
+
+def no_brasil(lat, lon):
+    return -34 <= lat <= 5.5 and -74 <= lon <= -28.5
+
+
+def centro(pts):
+    """Median point and the median distance (km) of the points to it."""
+    lon = statistics.median(p[0] for p in pts); lat = statistics.median(p[1] for p in pts)
+    return lon, lat, statistics.median(hav(lon, lat, x, y) for x, y in pts)
+
+
+def coord_pdf(c, places):
+    """(lon, lat, n points) from the coordinates found in the thesis text, or None when they are missing or scattered."""
+    pts = [(lon, lat) for lat, lon, _ in c.get('ll') or []]
+    utm = c.get('utm') or []
+    if utm and (any(m for *_, m in utm) or len(utm) >= 3):
+        zonas = c.get('zonas') or {}
+        ref = next(((p[3], p[4]) for p in places if p[0] != 'estado'), None) or next(((p[3], p[4]) for p in places), None)
+        zone = int(max(zonas, key=zonas.get)) if zonas else (int((ref[0] + 180) // 6) + 1 if ref else None)
+        if zone:
+            u = [(lon, lat) for lat, lon in (utm_to_latlon(e, n, zone) for e, n, _ in utm) if no_brasil(lat, lon)]
+            if u and not zonas:
+                ux, uy, _ = centro(u)
+                if hav(ux, uy, *ref) > 150:
+                    u = []
+            pts += u
+    if not pts:
+        return None
+    lon, lat, esp = centro(pts)
+    return (round(lon, 4), round(lat, 4), len(pts)) if esp < 50 else None
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--dados', default=os.environ.get('SGB_DATA') or os.path.join(os.path.dirname(HERE), 'data'),
@@ -236,7 +296,23 @@ def main():
     src = os.path.join(os.path.abspath(os.path.expanduser(a.dados)), 'bdtd', 'bdtd_minerio.jsonl')
     if not os.path.exists(src):
         sys.exit(f'não achei {src} — rode python -m scrapers_sgb bdtd harvest ou passe --dados')
-    loc = Locator(municipios(os.path.join(OUT, 'brasil_municipios.topojson')))
+    muns = municipios(os.path.join(OUT, 'brasil_municipios.topojson'))
+    loc = Locator(muns)
+    cpath = os.path.join(os.path.dirname(src), 'bdtd_coords.jsonl')
+    coords = {}
+    if os.path.exists(cpath):
+        for l in open(cpath, encoding='utf-8'):
+            try:
+                c = json.loads(l)
+            except ValueError:   # last line of a run still going / interrupted
+                continue
+            if c.get('status') == 'ok':
+                coords[c['id']] = c
+
+    def perto(lon, lat):
+        """Label for a PDF coordinate: the municipality with the nearest centroid."""
+        m = min(muns, key=lambda m: (m[2] - lon) ** 2 + (m[3] - lat) ** 2)
+        return f'perto de {m[0]}/{m[1]}'
     recs = [json.loads(l) for l in open(src, encoding='utf-8') if l.strip()]
     # the same work is often deposited twice (institutional repository + a later copy): keep one per title + first
     # author, preferring the copy with a PDF and then the oldest record
@@ -255,14 +331,19 @@ def main():
             print(('  ' if pl else '--'), r['titulo'][:110], '\n      ', [(p[0], p[1], p[2]) for p in pl] or r['assuntos'][:110])
         return
 
-    PREC = ['municipio', 'regiao', 'estado', 'resumo']
+    PREC = ['municipio', 'regiao', 'estado', 'resumo', 'pdf']
     TIPO = ['dissertacao', 'tese']
     o = dict(x=[], y=[], d=[], p=[], lg=[])              # points: lon, lat, thesis index, precision, place name
     T = dict(t=[], a=[], ins=[], tp=[], tm=[], id=[], pdf=[], pr=[], h=[])  # theses
     lugares = []
     lix = {}
+    n_pdf_novas = 0
     for r in recs:
         pl = loc.locate(r)
+        cp = coord_pdf(coords[r['id']], pl) if r['id'] in coords else None
+        if cp:
+            n_pdf_novas += not pl
+            pl = [('pdf', perto(cp[0], cp[1]), '', cp[0], cp[1])]
         if not pl:
             continue
         di = len(T['t'])
@@ -273,7 +354,7 @@ def main():
         T['pr'].append((r.get('programa') or '')[:120])
         T['h'].append(' '.join((r['titulo'], r.get('assuntos') or '', r['instituicao'])).lower()[:600])
         for prec, nome, uf, x, y in pl:
-            lab = f'{nome}/{uf}' if prec != 'estado' else nome
+            lab = f'{nome}/{uf}' if prec not in ('estado', 'pdf') else nome
             if lab not in lix:
                 lix[lab] = len(lugares); lugares.append(lab)
             o['x'].append(x); o['y'].append(y); o['d'].append(di); o['p'].append(PREC.index(prec)); o['lg'].append(lix[lab])
@@ -285,11 +366,13 @@ def main():
     if os.path.exists(sgb_path):
         sgb = json.load(open(sgb_path, encoding='utf-8'))
         sgb.setdefault('n', {})['teses'] = len(o['x'])
-        sgb['bdtd'] = dict(gerado=datetime.date.today().isoformat(), teses=len(T['t']), total=len(recs))
+        sgb['bdtd'] = dict(gerado=datetime.date.today().isoformat(), teses=len(T['t']), total=len(recs),
+                           pdf=sum(1 for p in o['p'] if PREC[p] == 'pdf'), textos=len(coords))
         with open(sgb_path, 'w', encoding='utf-8') as fh:
             json.dump(sgb, fh, ensure_ascii=False, separators=(',', ':'))
     c = collections.Counter(PREC[p] for p in o['p'])
     print(json.dumps(dict(teses=len(recs), duplicadas_removidas=n_dup, localizadas=len(T['t']), pontos=len(o['x']), por_precisao=c,
+                          textos_lidos=len(coords), so_pela_coordenada=n_pdf_novas,
                           kb=os.path.getsize(os.path.join(OUT, 'bdtd.json')) // 1024), ensure_ascii=False))
 
 

@@ -52,7 +52,10 @@
         <div class="layer-list" id="sgbTeses"></div>
         <span class="control-label sub-label">Precisão da localização <a class="reset-link" data-reset="tespr">padrão</a></span>
         <div class="chips" id="chipsTesPr"><span class="sub-note">ligue “Teses e dissertações” para carregar</span></div>
-        <p class="sub-note">As teses não têm coordenada: cada uma vai para o município ou distrito mineral citado no título, nos assuntos ou na cobertura (até 4 lugares); sem isso, para os citados no resumo (até 3, menos confiável). Sem nenhum, vai para o centro do estado citado — desligado por padrão para não empilhar pontos. Busca e commodity filtram pelo título e assuntos.</p>
+        <span class="control-label sub-label">Instituição <a class="reset-link" data-reset="tesins">qualquer</a></span>
+        <div class="chips" id="chipsTesIns"></div>
+        <p class="sub-note">Nenhuma marcada = qualquer. Os números contam as teses que acharam um lugar.</p>
+        <p class="sub-note">A BDTD não traz coordenada. Quando o texto da tese traz (área de estudo, amostras ou furos, em graus ou UTM) e os pontos são coerentes, ela vai para lá (“coordenada no PDF”). Senão, vai para o município ou distrito mineral citado no título, nos assuntos ou na cobertura (até 4 lugares); sem isso, para os citados no resumo (até 3, menos confiável). Sem nenhum, vai para o centro do estado citado — desligado por padrão para não empilhar pontos. Busca e commodity filtram pelo título e assuntos.</p>
       </div>
 
       <div class="control-group">

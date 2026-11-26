@@ -36,7 +36,7 @@
     {k: 'pocos', nome: 'Poços (SIAGAS / RIMAS)', sub: 'poços tubulares, de monitoramento, nascentes (GeoSGB)', cor: '#1A9BB0', curto: 'poços'},
     {k: 'fontes', nome: 'Fontes hidrominerais', sub: 'municípios com fontes cadastradas (GeoSGB)', cor: '#5B8C3A', curto: 'fontes hidromin.'},
     // theses have no coordinates: preparar_bdtd.py places each one at the towns/districts named in its title or subjects
-    {k: 'teses', nome: 'Teses e dissertações', sub: 'geologia e mineração, no lugar citado no título · carrega ao ligar', cor: '#8C4A6B', curto: 'teses', lazy: 'bdtd', src: 'BDTD', grp: 'teses'},
+    {k: 'teses', nome: 'Teses e dissertações', sub: 'geologia e mineração, na coordenada do texto ou no lugar citado · carrega ao ligar', cor: '#8C4A6B', curto: 'teses', lazy: 'bdtd', src: 'BDTD', grp: 'teses'},
   ];
   const SGB_AREA = [
     {k: 'aero', nome: 'Aerolevantamentos', sub: 'magnetometria, gamaespectrometria… (GeoSGB)', cor: '#2F6FA8'},
@@ -64,7 +64,8 @@
     tipos: new Set(), precisao: new Set([0, 1]), ufconf: false, info: new Set(), comm: new Set(),
     anoMin: 0, anoMax: 9999, soNovos: false, busca: '', sel: null,
     sgb: Object.fromEntries(SGB_ALL.map(d => [d.k, false])), geoqCl: new Set(), ocIm: new Set(), folEsc: new Set(),
-    tesPr: new Set([0, 1, 3]),                               // thesis location precision: município, região, resumo (estado off)
+    tesPr: new Set([0, 1, 3, 4]),                            // thesis location precision: município, região, resumo, PDF (estado off)
+    tesIns: new Set(),                                       // thesis institutions (empty = any)
     vmin: null, vmax: null,                                  // show only areas whose value is within [vmin, vmax]
     scale: {hex: {lo: null, hi: null}, mun: {lo: null, hi: null}},  // manual colour-scale ends (null = data extremes)
   };
@@ -161,10 +162,32 @@
   function buildTesChips() {
     const o = SGB.camadas.teses, n = o.p_l.map(() => new Set());
     o.p.forEach((p, i) => n[p].add(o.d[i]));
-    const nome = {municipio: 'município', regiao: 'distrito/região mineral', resumo: 'citado só no resumo', estado: 'só o estado'};
+    const nome = {pdf: 'coordenada no PDF', municipio: 'município', regiao: 'distrito/região mineral', resumo: 'citado só no resumo', estado: 'só o estado'};
     $('chipsTesPr').innerHTML = '';
-    ['municipio', 'regiao', 'resumo', 'estado'].map(t => o.p_l.indexOf(t)).filter(i => i >= 0).forEach(i => chip($('chipsTesPr'), nome[o.p_l[i]], S.tesPr.has(i), () => toggle(S.tesPr, i))
+    ['pdf', 'municipio', 'regiao', 'resumo', 'estado'].map(t => o.p_l.indexOf(t)).filter(i => i >= 0).forEach(i => chip($('chipsTesPr'), nome[o.p_l[i]], S.tesPr.has(i), () => toggle(S.tesPr, i))
       .insertAdjacentHTML('beforeend', ` <span class="n">${fmt(n[i].size)}</span>`));
+    buildTesInsChips();
+  }
+  // institution chips: the 15 with most placed theses, the rest behind "+ outras"
+  const insNome = s => s.replace('PUC_MINS', 'PUC Minas').replace('PUC_RIO', 'PUC-Rio').replace('_', '-');
+  function buildTesInsChips() {
+    const o = SGB.camadas.teses, T = o.T, n = new Map();
+    new Set(o.d).forEach(t => n.set(T.ins[t], (n.get(T.ins[t]) || 0) + 1));
+    const box = $('chipsTesIns'), TOP = 15;
+    box.innerHTML = '';
+    const rows = [...n].filter(([s]) => s).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    rows.forEach(([s, c], j) => {
+      const b = chip(box, insNome(s), S.tesIns.has(s), () => toggle(S.tesIns, s));
+      b.insertAdjacentHTML('beforeend', ` <span class="n">${fmt(c)}</span>`);
+      if (j >= TOP && !S.tesIns.has(s)) b.hidden = true;
+    });
+    const nHid = box.querySelectorAll('.chip[hidden]').length;
+    if (nHid) {
+      const more = document.createElement('button');
+      more.className = 'chip more'; more.textContent = `+ ${nHid} outras`;
+      more.onclick = () => { box.querySelectorAll('.chip[hidden]').forEach(c => c.hidden = false); more.remove(); };
+      box.appendChild(more);
+    }
   }
   const sgbOn = () => SGB_PT.some(d => S.sgb[d.k]);
   const sgbAreasOn = () => SGB_POLY.some(d => S.sgb[d.k]);
@@ -180,7 +203,7 @@
       const lab = document.createElement('label');
       lab.className = 'layer-item';
       const sub = d.k === 'pocos' && L.pocos ? `${d.sub} · SIAGAS só ${L.pocos.siagas_ufs.join(', ') || '—'}; RIMAS no país`
-        : d.k === 'teses' && SGB.bdtd ? `${d.sub} · ${fmt(SGB.bdtd.teses)} das ${fmt(SGB.bdtd.total)} coletadas citam um lugar` : d.sub;
+        : d.k === 'teses' && SGB.bdtd ? `${d.sub} · ${fmt(SGB.bdtd.teses)} das ${fmt(SGB.bdtd.total)} coletadas no mapa${SGB.bdtd.pdf ? `, ${fmt(SGB.bdtd.pdf)} pela coordenada do PDF` : ''}` : d.sub;
       lab.innerHTML = `<input type="checkbox" data-sgb="${d.k}"><span class="sw${area ? ' area' : ''}" style="background:${d.cor};border-color:${d.cor}"></span>
         <span><b><span class="src ${d.src ? d.src.toLowerCase() : 'sgb'}">${d.src || 'SGB'}</span>${esc(d.nome)}<span class="n">${fmt(nOf(d))}</span></b><small>${esc(sub)}</small></span>`;
       const inp = lab.querySelector('input'), small = lab.querySelector('small');
@@ -294,7 +317,8 @@
       if (k === 'geoqcl' && SGB?.camadas.geoq) { S.geoqCl = new Set(SGB.camadas.geoq.cl_l.map((_, i) => i)); setChips('chipsGeoq', true); }
       if (k === 'folesc' && SGB?.camadas.folhas) { S.folEsc = new Set(SGB.camadas.folhas.map(a => a.esc)); setChips('chipsFolhas', true); }
       if (k === 'ocim' && SGB?.camadas.ocorr) { S.ocIm = new Set(SGB.camadas.ocorr.im_l.map((_, i) => i)); setChips('chipsOcorr', true); }
-      if (k === 'tespr') { S.tesPr = new Set([0, 1, 3]); if (SGB?.camadas.teses) buildTesChips(); }
+      if (k === 'tespr') { S.tesPr = new Set([0, 1, 3, 4]); if (SGB?.camadas.teses) buildTesChips(); }
+      if (k === 'tesins') { S.tesIns.clear(); if (SGB?.camadas.teses) buildTesInsChips(); }
       update();
     });
     $('resetAll').onclick = () => {
@@ -465,7 +489,7 @@
         for (let i = 0; i < o.n; i++) if (!q || o.pj_h[o.pj[i]].includes(q)) idx.push(i);
       } else if (d.k === 'teses') {
         // the commodity filter matches the commodity name in the title/subjects
-        for (let i = 0; i < o.n; i++) if (S.tesPr.has(o.p[i]) && (!q || o.h[i].includes(q)) && (!comm || [...comm].some(c => o.h[i].includes(c)))) idx.push(i);
+        for (let i = 0; i < o.n; i++) if (S.tesPr.has(o.p[i]) && (!S.tesIns.size || S.tesIns.has(o.T.ins[o.d[i]])) && (!q || o.h[i].includes(q)) && (!comm || [...comm].some(c => o.h[i].includes(c)))) idx.push(i);
       } else if (o.h) {
         for (let i = 0; i < o.n; i++) if (!q || o.h[i].includes(q)) idx.push(i);
       } else if (!q) {
@@ -806,10 +830,10 @@
     if (k === 'mt') return `<b>Estação ${esc(o.s[i])}</b> — ${esc(o.pj_l[o.pj[i]])}<br>${esc(o.d[i])} · ${esc(o.ins[i])}<br>${where}`;
     if (k === 'pocos') return `<b>${esc(o.nm[i] || o.pid[i])}</b> — ${esc(o.nat_l[o.nat[i]])}<br>${o.pr[i] != null ? `${o.pr[i]} m · ` : ''}${esc(o.aq[i] || 'aquífero não informado')} · ${esc(o.mun[i])}/${o.uf[i]}<br>${where} · ${o.src_l[o.src[i]]}`;
     if (k === 'fontes') return `<b>${esc(o.nm[i])}/${o.uf[i]}</b><br>${fmt(o.q[i])} fontes hidrominerais<br>${where}`;
-    if (k === 'teses') { const T = o.T, t = o.d[i]; return `<b>${esc(T.t[t])}</b><br>${o.tp_l[T.tp[t]]} · ${esc(T.a[t])} · ${esc(T.ins[t])}<br><span class="muted">BDTD · local: ${esc(o.lg_l[o.lg[i]])} (${tesPrec(o, i)})</span>`; }
+    if (k === 'teses') { const T = o.T, t = o.d[i]; return `<b>${esc(T.t[t])}</b><br>${o.tp_l[T.tp[t]]} · ${esc(T.a[t])} · ${esc(insNome(T.ins[t]))}<br><span class="muted">BDTD · local: ${esc(o.lg_l[o.lg[i]])} (${tesPrec(o, i)})</span>`; }
     return '';
   }
-  const tesPrec = (o, i) => ({municipio: 'município', regiao: 'distrito/região', resumo: 'citado só no resumo', estado: 'só o estado'})[o.p_l[o.p[i]]];
+  const tesPrec = (o, i) => ({pdf: 'coordenada no PDF', municipio: 'município', regiao: 'distrito/região', resumo: 'citado só no resumo', estado: 'só o estado'})[o.p_l[o.p[i]]];
   const fmtMa = v => v >= 100 ? fmt(Math.round(v)) : d3.format('.3~r')(v);
   function geolIdade(a) {
     const era = SGB.cat.geol[a.c], eras = a.e0 && a.e0 !== era ? `${era} a ${a.e0}` : era;
@@ -980,7 +1004,7 @@
         const ts = [...lugares.keys()].sort((a, b) => (T.a[b] || '').localeCompare(T.a[a] || ''));
         const lnk = t => `<a href="https://bdtd.ibict.br/vufind/Record/${encodeURIComponent(T.id[t])}" target="_blank" rel="noopener">BDTD</a>${T.pdf[t] ? ` · <a href="${esc(T.pdf[t])}" target="_blank" rel="noopener">PDF</a>` : ''}`;
         body = `<p class="sub-note">${fmt(ts.length)} trabalhos · ${fmt(ts.filter(t => T.tp[t] === 1).length)} teses de doutorado · ${fmt(ts.filter(t => T.tm[t]).length)} sobre recursos minerais e mineração</p><ul>`
-          + ts.slice(0, MAXL).map(t => `<li><b>${esc(T.t[t])}</b> <span class="muted">— ${o.tp_l[T.tp[t]]} · ${esc(T.a[t])} · ${esc(T.ins[t])} · ${esc([...lugares.get(t)].join(', '))}</span><br>${lnk(t)}</li>`).join('')
+          + ts.slice(0, MAXL).map(t => `<li><b>${esc(T.t[t])}</b> <span class="muted">— ${o.tp_l[T.tp[t]]} · ${esc(T.a[t])} · ${esc(insNome(T.ins[t]))} · ${esc([...lugares.get(t)].join(', '))}</span><br>${lnk(t)}</li>`).join('')
           + more(ts.length, MAXL) + '</ul>';
       } else if (d.k === 'mt') {
         body = '<ul>' + countBy(idx, i => o.pj[i]).map(([pj, n]) => {

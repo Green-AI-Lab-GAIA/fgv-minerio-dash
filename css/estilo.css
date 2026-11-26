@@ -95,6 +95,8 @@ a{color:var(--accent)}
 .chip{padding:4px 9px;border-radius:99px;border:1px solid var(--border);background:var(--surface-2);cursor:pointer;font-size:12px;display:inline-flex;align-items:center;gap:5px}
 .chip.on{background:var(--accent-soft);border-color:var(--accent-soft-border);color:var(--accent-ink);font-weight:600}
 .chip .dot{width:8px;height:8px;border-radius:50%}
+.chip[hidden]{display:none}
+.chip.more{background:transparent;border-style:dashed;color:var(--ink-muted)}
 .chip .n{font-family:var(--font-mono);font-size:10.5px;color:var(--ink-muted);font-weight:400}
 
 .check{display:flex;gap:7px;align-items:flex-start;font-size:12.5px;cursor:pointer}
